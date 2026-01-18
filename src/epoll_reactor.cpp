@@ -14,7 +14,7 @@
 #include <vector>
 #include <iostream>
 
-bool g_running = true;
+extern bool g_running; // 使用 main.cpp 中定义的全局变量
 
 EpollReactor::EpollReactor(int listen_fd)
     : listen_fd_(listen_fd)
@@ -24,7 +24,7 @@ EpollReactor::EpollReactor(int listen_fd)
 
     epoll_event ev {};
     ev.events = EPOLLIN; 
-    ev.data.fd = listen_fd_; // 这里的 listen_fd_ 现在应该是类似 3, 4 这样的小数字了
+    ev.data.fd = listen_fd_; 
     
     if (::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, listen_fd_, &ev) < 0) {
         throw std::runtime_error("epoll_ctl ADD listen_fd failed");
@@ -38,7 +38,8 @@ EpollReactor::~EpollReactor()
     }
 }
 
-void EpollReactor::AcceptLoop()
+// 处理新连接请求
+void EpollReactor::HandleAccept()
 {
     while (true)
     {
@@ -50,9 +51,11 @@ void EpollReactor::AcceptLoop()
             break;
         }
 
-        auto conn = std::make_unique<Connection>(client_fd);
+        // 核心改动：使用 shared_ptr 管理
+        auto conn = std::make_shared<Connection>(client_fd);
+        
         epoll_event ev {};
-        ev.events = EPOLLIN; // 默认只监听读
+        ev.events = EPOLLIN | EPOLLET; // V2 建议使用边缘触发 (ET) 配合非阻塞 IO
         ev.data.fd = client_fd;
 
         if (::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, client_fd, &ev) < 0)
@@ -60,95 +63,65 @@ void EpollReactor::AcceptLoop()
             ::close(client_fd);
             continue;
         }
-        conns_[client_fd] = std::move(conn);
-        std::cout << "[Server] New connection, fd: " << client_fd << std::endl;
+
+        // 存入 connections_ (unordered_map)
+        connections_[client_fd] = std::move(conn);
+        std::cout << "[Reactor] New connection, fd: " << client_fd << std::endl;
     }
 }
 
-void EpollReactor::UpdateInterest(Connection& conn)
-{
-    epoll_event ev {};
-    ev.data.fd = conn.Fd();
-    
-    // 基础事件：始终监听读，防止半关闭状态丢失
-    ev.events = EPOLLIN; 
 
-    // 关键：检查是否有待发送的数据
-    if (conn.HasPendingWrite()) {
-        ev.events |= EPOLLOUT; 
-    }
 
-    // 必须使用 MOD 模式更新已存在的 FD
-    if (::epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, conn.Fd(), &ev) < 0) {
-        // 如果 MOD 失败，打印错误，方便调试
-        perror("epoll_ctl MOD failed");
-    }
-}
-
-void EpollReactor::Run()
-{
-    std::array<epoll_event, 64> events {};
-
-    std::cout << "[Server] Reactor is running on 8080..." << std::endl;
-
-    while (g_running)
-    {
-        int n = ::epoll_wait(epoll_fd_, events.data(),
-                             static_cast<int>(events.size()), -1);
-
+void EpollReactor::Run() {
+    while (g_running) {
+        int n = ::epoll_wait(epoll_fd_, events_.data(), (int)events_.size(), 1000);
         if (n < 0) {
             if (errno == EINTR) continue;
             break;
         }
 
-        for (int i = 0; i < n; ++i)
-        {
-            int fd = events[i].data.fd;
+        for (int i = 0; i < n; ++i) {
+            int fd = events_[i].data.fd;
+            uint32_t revents = events_[i].events;
 
-            // 1. 处理新连接请求
-            if (fd == listen_fd_)
-            {
-                AcceptLoop();
-                continue;
+            if (fd == listen_fd_) {
+                HandleAccept(); continue;
             }
 
-            auto it = conns_.find(fd);
-            if (it == conns_.end()) continue;
-
-            Connection& conn = *it->second;
-
-            // 2. 处理读事件 (EPOLLIN)
-            if (events[i].events & EPOLLIN)
+            std::shared_ptr<Connection> conn;
             {
-                conn.HandleRead();
-                
-                // 【修改关键点】
-                // 读完后，数据如果进了写缓冲区（Echo），
-                // 必须调用 UpdateInterest 来开启 EPOLLOUT，否则写操作永远不会被触发。
-                UpdateInterest(conn);
+                auto it = connections_.find(fd);
+                if (it != connections_.end()) conn = it->second;
+            }
+            if (!conn) continue;
+
+            // 1. 处理异常
+            if (revents & (EPOLLERR | EPOLLHUP)) {
+                conn->Close();
+            } else {
+                // 2. 处理读
+                if (revents & (EPOLLIN | EPOLLRDHUP)) {
+                    conn->HandleRead(on_message_);
+                }
+                // 3. 处理写
+                if (conn->State() == ConnState::OPEN && (revents & EPOLLOUT)) {
+                    conn->HandleWrite();
+                }
             }
 
-            // 3. 处理写事件 (EPOLLOUT)
-            // 只有当状态为 OPEN 且缓冲区有数据时才处理
-            if (conn.State() == ConnState::OPEN && (events[i].events & EPOLLOUT))
-            {
-                conn.HandleWrite();
-                
-                // 【修改关键点】
-                // 写完后再次更新，如果写缓冲区空了，UpdateInterest 会移除 EPOLLOUT，
-                // 从而避免“忙轮询（Busy Loop）”。
-                UpdateInterest(conn);
-            }
-
-            // 4. 清理连接
-            // 如果在 HandleRead 中检测到 EOF(n=0)，状态会被设为 CLOSED
-            if (conn.State() == ConnState::CLOSED)
-            {
-                std::cout << "[Server] Closing connection, fd: " << fd << std::endl;
+            // 4. 清理或更新
+            if (conn->State() == ConnState::CLOSED) {
                 ::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
-                conns_.erase(it);
+                connections_.erase(fd);
+            } else {
+                uint32_t new_ev = EPOLLIN | EPOLLET | EPOLLRDHUP;
+                if (conn->HasPendingWrite()) new_ev |= EPOLLOUT;
+                
+                epoll_event ev{};
+                ev.events = new_ev;
+                ev.data.fd = fd;
+                ::epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev);
             }
         }
     }
-    std::cout << "Reactor stopped gracefully." << std::endl;
 }
