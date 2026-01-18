@@ -1,0 +1,9 @@
+
+build/
+.vscode/
+*.o
+*.a
+server
+test_*
+.vscode/
+EOF
