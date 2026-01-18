@@ -73,54 +73,44 @@ void EpollReactor::HandleAccept()
 
 
 void EpollReactor::Run() {
-    while (g_running) {
-        int n = ::epoll_wait(epoll_fd_, events_.data(), (int)events_.size(), 1000);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            break;
-        }
-
+    struct epoll_event events[1024];
+    while (true) {
+        int n = epoll_wait(epoll_fd_, events, 1024, -1);
         for (int i = 0; i < n; ++i) {
-            int fd = events_[i].data.fd;
-            uint32_t revents = events_[i].events;
+            int fd = events[i].data.fd;
 
             if (fd == listen_fd_) {
-                HandleAccept(); continue;
-            }
-
-            std::shared_ptr<Connection> conn;
-            {
-                auto it = connections_.find(fd);
-                if (it != connections_.end()) conn = it->second;
-            }
-            if (!conn) continue;
-
-            // 1. 处理异常
-            if (revents & (EPOLLERR | EPOLLHUP)) {
-                conn->Close();
+                // 处理新连接逻辑 (Accept)
+                HandleAccept();
             } else {
-                // 2. 处理读
-                if (revents & (EPOLLIN | EPOLLRDHUP)) {
+                auto conn = connections_[fd];
+                if (!conn) continue;
+
+                // 1. 处理可读事件
+                if (events[i].events & EPOLLIN) {
                     conn->HandleRead(on_message_);
                 }
-                // 3. 处理写
-                if (conn->State() == ConnState::OPEN && (revents & EPOLLOUT)) {
+
+                // 2. 处理可写事件 (当之前 Send 没发完时触发)
+                if (events[i].events & EPOLLOUT) {
                     conn->HandleWrite();
                 }
-            }
 
-            // 4. 清理或更新
-            if (conn->State() == ConnState::CLOSED) {
-                ::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
-                connections_.erase(fd);
-            } else {
-                uint32_t new_ev = EPOLLIN | EPOLLET | EPOLLRDHUP;
-                if (conn->HasPendingWrite()) new_ev |= EPOLLOUT;
-                
-                epoll_event ev{};
-                ev.events = new_ev;
+                // 3. 动态更新 Epoll 关注点 (核心优化)
+                // 如果应用层缓冲区还有数据没发完，则必须关注 EPOLLOUT
+                struct epoll_event ev;
                 ev.data.fd = fd;
-                ::epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev);
+                ev.events = EPOLLIN | EPOLLET; // 默认边缘触发读
+                if (conn->HasPendingWrite()) {
+                    ev.events |= EPOLLOUT; // 缓冲区有数，增加写监听
+                }
+
+                if (conn->State() == ConnState::CLOSED) {
+                    connections_.erase(fd);
+                    epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
+                } else {
+                    epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev);
+                }
             }
         }
     }

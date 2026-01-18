@@ -6,30 +6,28 @@
 #include <string>
 #include <unordered_map>
 
-enum class HttpMethod { GET, POST, UNKNOWN };
-enum class ParseState { REQUEST_LINE, HEADERS, BODY, FINISH };
+enum class ParseState { REQUEST_LINE, HEADERS, BODY, FINISH, ERROR };
 
 class HttpRequest {
 public:
-    HttpRequest() : state_(ParseState::REQUEST_LINE), method_(HttpMethod::UNKNOWN) {}
+    HttpRequest() : state_(ParseState::REQUEST_LINE) {}
 
-    // 核心解析接口
-    bool Parse(const std::string& data);
+    // 解析主入口：传入缓冲区，返回是否解析完成
+    bool Parse(std::string& buffer); 
+    
     bool IsFinish() const { return state_ == ParseState::FINISH; }
+    bool IsError() const { return state_ == ParseState::ERROR; }
+    void Reset();
 
-    // 获取解析后的数据
     std::string GetPath() const { return path_; }
-    std::string GetHeader(const std::string& key) const;
+    std::string GetMethod() const { return method_; }
 
 private:
-    // 解析每一行的子逻辑
     bool ParseRequestLine(const std::string& line);
     bool ParseHeader(const std::string& line);
 
     ParseState state_;
-    HttpMethod method_;
-    std::string path_;
-    std::string version_;
+    std::string method_, path_, version_;
     std::unordered_map<std::string, std::string> headers_;
     std::string body_;
 };
