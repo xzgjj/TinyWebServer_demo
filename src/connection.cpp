@@ -7,10 +7,8 @@
 #include <cstring>
 #include <iostream>
 
-Connection::Connection(int fd) : fd_(fd), state_(ConnState::OPEN) {
-    read_buffer_.reserve(4096);
-    write_buffer_.reserve(4096);
-}
+Connection::Connection(int fd)
+    : fd_(fd), state_(ConnState::OPEN), http_parser_(std::make_shared<HttpRequest>()) {}
 
 Connection::~Connection() {
     if (fd_ >= 0) {
@@ -19,48 +17,33 @@ Connection::~Connection() {
     }
 }
 
-int Connection::Fd() const noexcept { return fd_; }
-
-ConnState Connection::State() const noexcept { return state_; }
-
-bool Connection::HasPendingWrite() const {
-    // 访问缓冲区需要加锁，防止主线程判断时子线程正在写入
-    // 注意：这里使用 const_cast 或 mutable 锁，或者简单返回
-    return !write_buffer_.empty(); 
-}
+// 删除重复定义的函数（第21-23行）
+// int Connection::Fd() const noexcept { return fd_; }
+// ConnState Connection::State() const noexcept { return state_; }
 
 void Connection::HandleRead(const MessageCallback& cb) {
-    if (state_ != ConnState::OPEN) return;
-
     char buf[4096];
-    while (true) { // 必须循环读取
+    while (true) {
         ssize_t n = ::read(fd_, buf, sizeof(buf));
         if (n > 0) {
-            std::string data(buf, n);
-            if (cb) cb(shared_from_this(), data);
-        } else if (n == 0) {
-            state_ = ConnState::CLOSED;
+            // 1. 将读取到的字节流追加到应用层缓冲区
+            input_buffer_.append(buf, n);
+            // 2. 调用回调，让业务层（main.cpp）去缓冲区里解析
+            if (cb) cb(shared_from_this(), "");
+        } else if (n < 0 && errno == EINTR) {
+            continue;
+        } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             break;
         } else {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                break; // 数据读完了
-            } else if (errno == EINTR) {
-                continue; // 信号中断，继续
-            } else {
-                state_ = ConnState::CLOSED;
-                break;
-            }
+            state_ = ConnState::CLOSED;
+            break;
         }
     }
 }
 
-void Connection::Send(const std::string& data) {
-    {
-        std::lock_guard<std::mutex> lock(buffer_mutex_);
-        if (state_ != ConnState::OPEN) return;
-        write_buffer_.insert(write_buffer_.end(), data.begin(), data.end());
-    }
-    TryFlushWriteBuffer();
+bool Connection::HasPendingWrite() const {
+    // 使用 write_buffer_（与头文件一致）
+    return !write_buffer_.empty();
 }
 
 void Connection::HandleWrite() {
@@ -68,22 +51,51 @@ void Connection::HandleWrite() {
     TryFlushWriteBuffer();
 }
 
+
+void Connection::Send(const std::string& data) {
+    {
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
+        if (state_ != ConnState::OPEN) return;
+        write_buffer_.append(data); // 使用 append
+    }
+    
+    // 尝试立即刷新缓冲区，发不完的部分会留在 write_buffer_ 
+    // 后续由 EpollReactor 触发 EPOLLOUT 事件时调用 HandleWrite 完成发送
+    TryFlushWriteBuffer();
+}
+
+
 bool Connection::TryFlushWriteBuffer() {
     std::lock_guard<std::mutex> lock(buffer_mutex_);
-    if (write_buffer_.empty()) return true;
+    if (write_buffer_.empty()) {
+        write_blocked_ = false;
+        return true;
+    }
 
-    ssize_t n = ::write(fd_, write_buffer_.data(), write_buffer_.size());
-    if (n > 0) {
-        write_buffer_.erase(write_buffer_.begin(), write_buffer_.begin() + n);
-    } else if (n < 0) {
-        if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            state_ = ConnState::CLOSED;
+    while (!write_buffer_.empty()) {
+        ssize_t n = ::write(fd_, write_buffer_.data(), write_buffer_.size());
+        if (n > 0) {
+            write_buffer_.erase(0, n);
+        } else if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                write_blocked_ = true; // 关键：标记被阻塞
+                return false; 
+            } else if (errno == EINTR) {
+                continue;
+            } else {
+                state_ = ConnState::CLOSED;
+                return false;
+            }
         }
     }
-    return write_buffer_.empty();
+    write_blocked_ = false; // 发完了
+    return true;
 }
 
 void Connection::Close() {
     std::lock_guard<std::mutex> lock(buffer_mutex_);
     state_ = ConnState::CLOSED;
+    // 清空缓冲区
+    write_buffer_.clear();
+    input_buffer_.clear();
 }
