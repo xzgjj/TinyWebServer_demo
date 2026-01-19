@@ -52,7 +52,7 @@ accept() ───────▶│ Connection │
 v2   线程池 /
 v3： 实现http /
 v4   定时 和 异步日志 /
-v5   mmp零拷贝  态资源系统和 / 火焰图
+v5   mmp零拷贝  静态态资源系统和 / 火焰图
 v6   线程池优化 参考项目  /
 
 性能 /
@@ -136,7 +136,7 @@ tools.py            // 测试脚本
 
 ## Build
 
-```bash
+bash
 mkdir -p build
 cd build
 cmake ..

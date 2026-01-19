@@ -10,14 +10,15 @@
 
 /**
  * @brief 日志级别定义
+ * 注意：避免使用 DEBUG, INFO, ERROR 等可能与系统宏冲突的名称
  */
 enum class LogLevel 
 {
-    DEBUG,
-    INFO,
-    WARN,
-    ERROR,
-    FATAL
+    LOG_LEVEL_DEBUG,   // 改为 LOG_LEVEL_DEBUG，避免与 DEBUG 宏冲突
+    LOG_LEVEL_INFO,    // 改为 LOG_LEVEL_INFO，避免与 INFO 宏冲突
+    LOG_LEVEL_WARN,    // 改为 LOG_LEVEL_WARN
+    LOG_LEVEL_ERROR,   // 改为 LOG_LEVEL_ERROR，避免与 ERROR 宏冲突
+    LOG_LEVEL_FATAL    // 改为 LOG_LEVEL_FATAL
 };
 
 class Logger 
@@ -30,7 +31,7 @@ public:
     }
 
     // 设置全局日志文件并启动后端线程
-    void Init(const std::string& log_path, LogLevel min_level = LogLevel::INFO) 
+    void Init(const std::string& log_path, LogLevel min_level = LogLevel::LOG_LEVEL_INFO) 
     {
         min_level_ = min_level;
         impl_ = std::make_unique<AsyncLogger>(log_path);
@@ -50,8 +51,10 @@ public:
         }
     }
 
+     std::string GetThreadIdString() const;
+
 private:
-    Logger() : min_level_(LogLevel::INFO) {}
+    Logger() : min_level_(LogLevel::LOG_LEVEL_INFO) {}
     std::unique_ptr<AsyncLogger> impl_;
     std::atomic<LogLevel> min_level_;
 
@@ -59,11 +62,11 @@ private:
     {
         switch (level) 
         {
-            case LogLevel::DEBUG: return "DEBUG";
-            case LogLevel::INFO:  return "INFO ";
-            case LogLevel::WARN:  return "WARN ";
-            case LogLevel::ERROR: return "ERROR";
-            case LogLevel::FATAL: return "FATAL";
+            case LogLevel::LOG_LEVEL_DEBUG: return "DEBUG";
+            case LogLevel::LOG_LEVEL_INFO:  return "INFO ";
+            case LogLevel::LOG_LEVEL_WARN:  return "WARN ";
+            case LogLevel::LOG_LEVEL_ERROR: return "ERROR";
+            case LogLevel::LOG_LEVEL_FATAL: return "FATAL";
             default: return "UNKNOWN";
         }
     }
@@ -77,10 +80,11 @@ private:
         } \
     } while(0)
 
-#define LOG_DEBUG(fmt, ...) LOG_BASE(LogLevel::DEBUG, fmt, ##__VA_ARGS__)
-#define LOG_INFO(fmt, ...)  LOG_BASE(LogLevel::INFO,  fmt, ##__VA_ARGS__)
-#define LOG_WARN(fmt, ...)  LOG_BASE(LogLevel::WARN,  fmt, ##__VA_ARGS__)
-#define LOG_ERROR(fmt, ...) LOG_BASE(LogLevel::ERROR, fmt, ##__VA_ARGS__)
-#define LOG_FATAL(fmt, ...) LOG_BASE(LogLevel::FATAL, fmt, ##__VA_ARGS__)
+// 更新宏定义，使用新的枚举值
+#define LOG_DEBUG(fmt, ...) LOG_BASE(LogLevel::LOG_LEVEL_DEBUG, fmt, ##__VA_ARGS__)
+#define LOG_INFO(fmt, ...)  LOG_BASE(LogLevel::LOG_LEVEL_INFO,  fmt, ##__VA_ARGS__)
+#define LOG_WARN(fmt, ...)  LOG_BASE(LogLevel::LOG_LEVEL_WARN,  fmt, ##__VA_ARGS__)
+#define LOG_ERROR(fmt, ...) LOG_BASE(LogLevel::LOG_LEVEL_ERROR, fmt, ##__VA_ARGS__)
+#define LOG_FATAL(fmt, ...) LOG_BASE(LogLevel::LOG_LEVEL_FATAL, fmt, ##__VA_ARGS__)
 
 #endif

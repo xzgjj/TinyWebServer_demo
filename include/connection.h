@@ -1,70 +1,70 @@
 //
 
-//
 #ifndef CONNECTION_H
 #define CONNECTION_H
 
 #include <memory>
 #include <string>
-#include <mutex>
-#include <functional>
+#include <vector>
 #include "http_request.h"
+#include <functional>
 
-class EpollReactor; // 前向声明
+class EventLoop;
 
-enum class ConnState { OPEN, CLOSED };
+enum class ConnState { kConnecting, kConnected, kDisconnecting, kDisconnected };
 
 class Connection : public std::enable_shared_from_this<Connection> {
 public:
     using MessageCallback = std::function<void(std::shared_ptr<Connection>, const std::string&)>;
+    using CloseCallback = std::function<void(int)>;
 
-    explicit Connection(int fd, EpollReactor* reactor);
+    Connection(int fd, EventLoop* loop);
     ~Connection();
 
-    // 新增：供 Reactor 调用
-    int Recv();                               // 从 socket 读到 input_buffer_
-    int Send();                               // 将 output_buffer_ 发送到 socket
-    
-    // 原有的发送接口（业务层调用）
-    void Send(const std::string& data);       // 将数据放入 output_buffer_ 并标记可写
-
-    const std::string& GetReadBuffer() const { return input_buffer_; }
+    // 【新增】初始化连接，必须在 loop 线程调用
+    void ConnectEstablished();
     void ClearReadBuffer() { input_buffer_.clear(); }
+    
+    // 【修改】发送数据，线程安全
+    void Send(const std::string& data);
+    void Send(const char* data, size_t len);
 
+    // 【新增】关闭连接，线程安全
+    void Shutdown();
+
+    // 状态与属性
     int GetFd() const { return fd_; }
-    ConnState State() const { return state_; }
+    EventLoop* GetLoop() const { return loop_; }
+    bool IsConnected() const { return state_ == ConnState::kConnected; }
 
-    std::shared_ptr<HttpRequest> GetHttpParser() { return http_parser_; }
+    void SetMessageCallback(MessageCallback cb) { message_callback_ = std::move(cb); }
+    void SetCloseCallback(CloseCallback cb) { close_callback_ = std::move(cb); }
+
+    // HTTP 相关辅助
     std::string& GetInputBuffer() { return input_buffer_; }
-
-    void HandleRead(const MessageCallback& cb);
-    void HandleWrite();
-    void Close();
-
-    // 性能优化：检查是否真的需要更新 Epoll 状态
-    bool HasPendingWrite() const { return write_offset_ < write_buffer_.size(); }
-    bool NeedsEpollUpdate() const { return needs_epoll_update_; }
-    void ClearUpdateFlag() { needs_epoll_update_ = false; }
-
-    bool TryFlushWriteBuffer();
+    std::shared_ptr<HttpRequest> GetHttpParser() { return http_parser_; }
 
 private:
+    // 只能在 loop_ 线程中调用的私有方法
+    void HandleRead(int fd);
+    void HandleWrite(int fd);
+    void HandleClose(int fd);
+    void HandleError(int fd);
+    
+    void SendInLoop(const std::string& data);
+    void ShutdownInLoop();
+
+    EventLoop* loop_;
     int fd_;
-    EpollReactor* reactor_;
     ConnState state_;
+
+    // 缓冲区（不再需要互斥锁，因为只在 IO 线程操作）
     std::string input_buffer_;
-    
-    // 缓冲区优化：使用 offset 避免 O(N) erase
-    std::string write_buffer_;
-    size_t write_offset_ = 0; 
+    std::string output_buffer_;
 
-    bool write_blocked_ = false;
-    bool needs_epoll_update_ = false; // 状态变更标记
-    
     std::shared_ptr<HttpRequest> http_parser_;
-    std::mutex buffer_mutex_;
-
-    std::string output_buffer_; // 写入缓冲区（仅用于Send()函数）
+    MessageCallback message_callback_;
+    CloseCallback close_callback_;
 };
 
 #endif
