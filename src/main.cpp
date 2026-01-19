@@ -14,7 +14,8 @@ void signal_handler(int sig) {
     std::cout << "\n[Server] Shutdown signal received." << std::endl;
 }
 
-int main() {
+int main() 
+{
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
@@ -22,33 +23,41 @@ int main() {
     Server server("0.0.0.0", 8080);
     std::cout << "[Server] TinyWebServer V3 (FSM Protocol) on port 8080" << std::endl;
 
-    server.SetOnMessage([](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
-        auto parser = conn->GetHttpParser();
-        auto& buffer = conn->GetInputBuffer();
+    
+    // 关键点：这里要换成你 thread_pool.h 里实际定义的函数名
+    // src/main.cpp
+    // src/main.cpp
+    server.SetOnMessage([&server](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
+        server.GetThreadPool()->AddTask([conn]() {
+            auto parser = conn->GetHttpParser();
+            auto& buffer = conn->GetInputBuffer(); // 假设这是 std::string
 
-        // 状态机解析逻辑
-        if (parser->Parse(buffer)) {
-            std::string path = parser->GetPath();
+            if (buffer.empty()) return;
+
+        // 执行解析
+            if (parser->Parse(buffer)) {
+                std::string path = parser->GetPath();
             
+            // 构造简单的 HTTP 响应
             std::string body = "<html><body><h1>TinyWebServer V3</h1><p>Path: " + path + "</p></body></html>";
-            std::string header = "HTTP/1.1 200 OK\r\n";
-            header += "Content-Type: text/html\r\n";
-            header += "Content-Length: " + std::to_string(body.size()) + "\r\n";
-            header += "Connection: close\r\n\r\n";
+            std::string header = "HTTP/1.1 200 OK\r\n"
+                                 "Content-Type: text/html\r\n"
+                                 "Content-Length: " + std::to_string(body.size()) + "\r\n"
+                                 "Connection: close\r\n\r\n";
             
+            // 发送数据
             conn->Send(header + body);
-            
-            // 重置解析器并关闭连接（V3阶段暂不处理长连接复杂竞争）
-            parser->Reset(); 
-            //conn->Close();
-        }
+
+            // --- 核心修复点 ---
+            // 解析并响应成功后，必须清空缓冲区和重置解析器状态
+            conn->ClearReadBuffer(); 
+            parser->Reset();
+            }
+        // 如果 Parse 返回 false，说明数据不全，我们保留 buffer，等待下一次 HandleRead 拼接
+        });
     });
-
-    try {
-        server.Start();
-    } catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
-    }
-
+    
+    std::cout << "[Server] TinyWebServer V3 is running..." << std::endl;
+    server.Start();
     return 0;
 }

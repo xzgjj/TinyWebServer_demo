@@ -1,6 +1,6 @@
 
 
-# TinyWebServer_v1
+# TinyWebServer_demo
 
 
 ## 概述
@@ -46,6 +46,15 @@ accept() ───────▶│ Connection │
 └────────────────────────────────────────┘
 
 
+## 架构与步骤
+
+框架演进路线
+v2   线程池
+v3： 实现http
+v4   定时 和 异步日志
+v5   mmp零拷贝  态资源系统和
+v6   线程池优化 参考项目
+
 
 ##  实现
 
@@ -72,41 +81,32 @@ EpollReactor 内维护了 epoll_fd_ 和 std::unordered_map<int, Connection>。
 所有客户端 socket 均为非阻塞模式，保证单线程事件循环不会被阻塞。
 
 
+
+
+
 实现对应：
 
 CreateListenSocket() 返回非阻塞的监听 socket。
-
 Connection::Fd() 对应的 socket 也设置了 O_NONBLOCK。
-
 TryFlushWriteBuffer() 实现非阻塞写，遇到 EAGAIN 返回等待下一轮事件。
 
 2.3 客户端生命周期管理
-每个客户端连接有状态：
-- OPEN: 连接可读写
-- CLOSED: 连接关闭
+每个客户端连接有状态：  - OPEN: 连接可读写  - CLOSED: 连接关闭
 
 
 实现对应：
-
 enum class ConnState { OPEN, CLOSED };
-
 Connection::State() 返回当前状态
-
 Connection::Close() 关闭 fd 并更新状态
-
 EpollReactor::Run() 根据状态决定是否处理读写事件
 
 2.4 事件驱动机制
 使用 Epoll 进行事件通知：
-- EPOLLIN -> 可读
-- EPOLLOUT -> 可写
-- EPOLLERR / EPOLLHUP -> 异常处理
+- EPOLLIN -> 可读  - EPOLLOUT -> 可写   EPOLLERR / EPOLLHUP -> 异常处理
 
 
 实现对应：
-
 EpollReactor::UpdateInterest(Connection&) 注册/修改 epoll 事件
-
 EpollReactor::Run() 循环调用 epoll_wait 并分发事件到对应 Connection
 
 2.5 并发处理
@@ -114,9 +114,7 @@ EpollReactor::Run() 循环调用 epoll_wait 并分发事件到对应 Connection
 
 
 实现对应：
-
 目前 v1 是单线程，依赖 epoll 高效轮询。
-
 连接操作和缓冲区在 Connection 内部封装，避免全局共享数据竞争。
 
 3. 架构与文件说明
@@ -173,10 +171,14 @@ python3 tools.py debug --target test_backpressure
 
 ## 测试
 make
+完全自动化测试（推荐）
+
 终端 1 (启动服务器):  ./server
 终端 2 (运行测试脚本):
 
 根目录运行测试
+find . -type f -exec touch {} +
+
 python3 tools.py build
 python3 tools.py test
 
@@ -192,3 +194,6 @@ python3 tools.py all
 启动服务器：
 ./build/server
 
+sudo kill -9 $(sudo lsof -t -i:8080)
+# 强制杀死所有名为 server 的进程
+pkill -9 server
