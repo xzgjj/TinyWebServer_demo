@@ -73,45 +73,51 @@ void EpollReactor::HandleAccept()
 
 
 void EpollReactor::Run() {
-    struct epoll_event events[1024];
-    while (true) {
-        int n = epoll_wait(epoll_fd_, events, 1024, -1);
+    while (g_running) {
+        int n = epoll_wait(epoll_fd_, events_.data(), events_.size(), -1);
         for (int i = 0; i < n; ++i) {
-            int fd = events[i].data.fd;
-
+            int fd = events_[i].data.fd;
             if (fd == listen_fd_) {
-                // 处理新连接逻辑 (Accept)
                 HandleAccept();
             } else {
-                auto conn = connections_[fd];
-                if (!conn) continue;
+                auto it = connections_.find(fd);
+                if (it == connections_.end()) continue;
+                auto conn = it->second;
 
-                // 1. 处理可读事件
-                if (events[i].events & EPOLLIN) {
+                if (events_[i].events & EPOLLIN) {
                     conn->HandleRead(on_message_);
                 }
-
-                // 2. 处理可写事件 (当之前 Send 没发完时触发)
-                if (events[i].events & EPOLLOUT) {
+                if (events_[i].events & EPOLLOUT) {
                     conn->HandleWrite();
                 }
 
-                // 3. 动态更新 Epoll 关注点 (核心优化)
-                // 如果应用层缓冲区还有数据没发完，则必须关注 EPOLLOUT
-                struct epoll_event ev;
-                ev.data.fd = fd;
-                ev.events = EPOLLIN | EPOLLET; // 默认边缘触发读
-                if (conn->HasPendingWrite()) {
-                    ev.events |= EPOLLOUT; // 缓冲区有数，增加写监听
+                // 核心优化：仅在 Connection 内部标记需要更新时才调用 epoll_ctl
+                if (conn->NeedsEpollUpdate()) {
+                    struct epoll_event ev;
+                    ev.data.fd = fd;
+                    ev.events = EPOLLIN | EPOLLET;
+                    if (conn->HasPendingWrite()) {
+                        ev.events |= EPOLLOUT;
+                    }
+                    ::epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev);
+                    conn->ClearUpdateFlag();
                 }
 
                 if (conn->State() == ConnState::CLOSED) {
-                    connections_.erase(fd);
-                    epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
-                } else {
-                    epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev);
+                    RemoveConnection(fd);
                 }
             }
         }
+    }
+}
+
+
+void EpollReactor::RemoveConnection(int fd) {
+    auto it = connections_.find(fd);
+    if (it != connections_.end()) {
+        // 由于 connections_ 存储的是 shared_ptr
+        // 从 map 中移除会导致引用计数减一，若为 0 则自动触发 Connection 析构并关闭 fd
+        connections_.erase(it);
+        std::cout << "[Reactor] Connection removed, fd: " << fd << std::endl;
     }
 }

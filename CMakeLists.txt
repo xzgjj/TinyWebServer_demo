@@ -1,48 +1,57 @@
 
 cmake_minimum_required(VERSION 3.16)
-project(TinyWebServer VERSION 3.0 LANGUAGES CXX) # 升级为 V3.0 (HTTP & FSM)
+project(TinyWebServer VERSION 3.0 LANGUAGES CXX)
 
+# --- 1. 基础标准设置 ---
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# 如果没指定模式，默认使用 Release 模式（为了跑 -O3）
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug)
+    set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# 编译选项：增加调试信息和警告
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wall -Wextra -Wpedantic -g -O0")
+# --- 2. 核心编译标志设置 ---
+# 无论 Debug 还是 Release，都建议保留 -g 以便在崩溃时看到堆栈
+set(COMMON_FLAGS "-Wall -Wextra -Wno-unused-variable -g -fno-omit-frame-pointer")
 
-# --- 0. 查找多线程库 ---
+# Debug 模式：-O0，方便 GDB 调试逻辑
+set(CMAKE_CXX_FLAGS_DEBUG "${COMMON_FLAGS} -O0")
+
+# Release 模式：-O3 极致优化 + ASan 内存审计
+# 注意：开启 ASan 后，运行时严禁挂载 Valgrind，两者会冲突导致 SIGSEGV
+set(CMAKE_CXX_FLAGS_RELEASE "${COMMON_FLAGS} -O3 -fsanitize=address")
+
+# 确保链接阶段也加入 ASan 库
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-fsanitize=address")
+
+# --- 3. 查找依赖 ---
 find_package(Threads REQUIRED)
 
-# --- 1. 包含目录 ---
+# --- 4. 包含路径 ---
 include_directories(${PROJECT_SOURCE_DIR}/include)
-include_directories(${PROJECT_SOURCE_DIR}/include/reactor) # 显式包含 reactor 子目录
+include_directories(${PROJECT_SOURCE_DIR}/include/reactor)
 include_directories(${PROJECT_SOURCE_DIR}/test)
 
-# --- 2. 核心逻辑静态库 ---
-# V3 新增了 server.cpp 和 http_request.cpp
+# --- 5. 构建核心静态库 (webserver_core) ---
+# 确保所有 V3 的源文件都在这里
 add_library(webserver_core STATIC
     src/epoll_reactor.cpp
     src/connection.cpp
     src/socket_utils.cpp
     src/error.cpp
-    src/http_request.cpp   # V3 新增：HTTP 请求解析
-    src/server.cpp         # V3 新增：服务器高层封装
+    src/http_request.cpp
+    src/server.cpp
     src/thread_pool.cpp
 )
-
-# 链接线程库到核心库
 target_link_libraries(webserver_core PRIVATE Threads::Threads)
 
-# --- 3. 主服务器程序 ---
+# --- 6. 构建主程序 ---
 add_executable(server src/main.cpp)
 target_link_libraries(server PRIVATE webserver_core)
 
-# --- 4. 自动化测试用例 ---
-# 注意：V3 的逻辑可能会导致部分 V2 的旧测试用例（如简单 echo 测试）失败，
-# 因为服务器现在期望的是 HTTP 报文格式。
+# --- 7. 构建测试集 ---
 set(TEST_PROGS
     test_lifecycle
     test_single_connection
@@ -53,17 +62,7 @@ set(TEST_PROGS
     test_main
 )
 
-foreach(T_NAME ${TEST_PROGS})
-    if(EXISTS "${PROJECT_SOURCE_DIR}/test/${T_NAME}.cpp")
-        add_executable(${T_NAME} test/${T_NAME}.cpp)
-        target_link_libraries(${T_NAME} PRIVATE webserver_core)
-    endif()
-endforeach()
-
-# 启用 CTest
-enable_testing()
-foreach(T_NAME ${TEST_PROGS})
-    if(TARGET ${T_NAME})
-        add_test(NAME ${T_NAME} COMMAND ${T_NAME})
-    endif()
+foreach(t ${TEST_PROGS})
+    add_executable(${t} test/${t}.cpp)
+    target_link_libraries(${t} PRIVATE webserver_core)
 endforeach()

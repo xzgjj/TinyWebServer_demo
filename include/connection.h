@@ -18,7 +18,6 @@ public:
     explicit Connection(int fd);
     ~Connection();
 
-    // 简单的getter函数直接在类内定义（推荐做法）
     int Fd() const { return fd_; }
     ConnState State() const { return state_; }
 
@@ -30,21 +29,27 @@ public:
     void Send(const std::string& data);
     void Close();
 
-    bool HasPendingWrite() const;
-    bool TryFlushWriteBuffer();
+    // 性能优化：检查是否真的需要更新 Epoll 状态
+    bool HasPendingWrite() const { return write_offset_ < write_buffer_.size(); }
+    bool NeedsEpollUpdate() const { return needs_epoll_update_; }
+    void ClearUpdateFlag() { needs_epoll_update_ = false; }
 
-    bool IsWriteBlocked() const { return write_blocked_; }
-    void SetWriteBlocked(bool b) { write_blocked_ = b; }
+    bool TryFlushWriteBuffer();
 
 private:
     int fd_;
     ConnState state_;
-    std::string input_buffer_;      // 输入缓冲区
-    std::string write_buffer_;      // 输出缓冲区（与cpp中一致）
-    std::mutex buffer_mutex_;       // 缓冲区互斥锁
-    std::shared_ptr<HttpRequest> http_parser_;
+    std::string input_buffer_;
+    
+    // 缓冲区优化：使用 offset 避免 O(N) erase
+    std::string write_buffer_;
+    size_t write_offset_ = 0; 
 
-    bool write_blocked_ = false; // 标记内核缓冲区是否已满
+    bool write_blocked_ = false;
+    bool needs_epoll_update_ = false; // 状态变更标记
+    
+    std::shared_ptr<HttpRequest> http_parser_;
+    std::mutex buffer_mutex_;
 };
 
-#endif // CONNECTION_H
+#endif

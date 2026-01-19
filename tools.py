@@ -15,10 +15,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-Project build / test / debug helper.
-Optimized for TinyWebServer_v1 full test suite.
-"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 import argparse
 import os
@@ -28,12 +29,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple
-import concurrent.futures
 
 ROOT_DIR = Path(__file__).resolve().parent
 BUILD_DIR = ROOT_DIR / "build"
 REPORT_FILE = ROOT_DIR / "report.md"
-GDB_LOG = ROOT_DIR / "gdb.log"
 
 # 必须与 CMakeLists.txt 中的目标名称严格匹配
 TEST_EXECUTABLES = [
@@ -47,107 +46,141 @@ TEST_EXECUTABLES = [
 ]
 
 def clean():
+    """清理构建目录和报告"""
     if BUILD_DIR.exists():
         shutil.rmtree(BUILD_DIR)
-        print("Build directory removed.")
+    if REPORT_FILE.exists():
+        REPORT_FILE.unlink()
+    for f in ROOT_DIR.glob("valgrind_*.log"):
+        f.unlink()
+    print("[Clean] Done. Build dir and old reports removed.")
 
-def cmake_configure() -> str:
+def cmake_configure():
+    """配置 CMake (Release 模式以启用 -O3)"""
     BUILD_DIR.mkdir(exist_ok=True)
-    res = subprocess.run(["cmake", "-S", ".", "-B", "build"], 
-                         capture_output=True, text=True)
-    return res.stdout + res.stderr
-
-def cmake_build() -> str:
-    res = subprocess.run(["cmake", "--build", "build", "--parallel"], 
-                         capture_output=True, text=True)
-    return res.stdout + res.stderr
-
-def run_single_test(test_name: str) -> Tuple[str, str, str]:
-    exe_path = BUILD_DIR / test_name
-    if not exe_path.exists():
-        return (test_name, "FAIL", f"Executable not found: {exe_path}")
-
-    try:
-        # 设置10秒超时，防止测试中的死循环
-        result = subprocess.run(
-            [str(exe_path)],
-            cwd=BUILD_DIR,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=10
-        )
-        status = "PASS" if result.returncode == 0 else "FAIL"
-        return (test_name, status, result.stdout)
-    except subprocess.TimeoutExpired as e:
-        return (test_name, "TIMEOUT", f"Test timed out: {e.stdout}")
-    except Exception as e:
-        return (test_name, "ERROR", str(e))
-
-def run_all_tests_parallel() -> List[Tuple[str, str, str]]:
-    results = []
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_to_test = {executor.submit(run_single_test, name): name for name in TEST_EXECUTABLES}
-        for future in concurrent.futures.as_completed(future_to_test):
-            results.append(future.result())
-    return results
-
-def run_gdb(target: str) -> str:
-    gdb_cmds = f"set logging file {GDB_LOG}\nset logging on\nrun\nbt\nquit\n"
-    cmd_file = ROOT_DIR / ".gdb_cmds"
-    cmd_file.write_text(gdb_cmds)
-    
-    res = subprocess.run(["gdb", "-batch", "-x", str(cmd_file), str(BUILD_DIR / target)],
-                         capture_output=True, text=True)
-    
-    if cmd_file.exists():
-        os.remove(cmd_file)
+    print(f"[Configure] Running CMake in {BUILD_DIR}...")
+    # 强制指定 Release 模式以激活 CMakeLists.txt 中的 -O3 + ASan 逻辑
+    res = subprocess.run(["cmake", "-DCMAKE_BUILD_TYPE=Release", ".."], 
+                         cwd=BUILD_DIR, capture_output=True, text=True)
+    if res.returncode != 0:
+        print("[Error] CMake Configuration Failed!")
+        print(res.stderr)
+        sys.exit(1)
     return res.stdout
 
-def write_report(conf, build, tests, gdb=""):
-    with open(REPORT_FILE, "w") as f:
-        f.write(f"# Build & Test Report\n\n**Generated:** {datetime.now().isoformat()}\n\n")
-        f.write(f"## Configure Output\n```\n{conf}\n```\n\n")
-        f.write(f"## Build Output\n```\n{build}\n```\n\n")
-        f.write("## Test Results\n")
-        for name, status, out in tests:
-            f.write(f"### {name} - {status}\n```\n{out}\n```\n\n")
-        if gdb:
-            f.write(f"## GDB Debug Log\n```\n{gdb}\n```\n")
+def cmake_build():
+    """编译项目"""
+    print("[Build] Compiling project with -j (Parallel)...")
+    res = subprocess.run(["make", "-j"], cwd=BUILD_DIR, capture_output=True, text=True)
+    if res.returncode != 0:
+        print("[Error] Build Failed!")
+        print(res.stderr)
+        # 不退出，以便将错误写入报告
+    return res.stdout + res.stderr
+
+def run_test(name: str) -> Tuple[str, str, str]:
+    """运行单个测试用例"""
+    target_path = BUILD_DIR / name
+    if not target_path.exists():
+        return name, "NOT FOUND", f"Binary {name} not found."
+
+    # 设置 ASan 环境变量：发现错误立即退出并打印堆栈
+    env = os.environ.copy()
+    env["ASAN_OPTIONS"] = "detect_leaks=1:halt_on_error=1:allocator_may_return_null=1"
+    
+    # 检查当前二进制是否带有 ASan (带有 asan 符号时，严禁使用 valgrind)
+    has_asan = False
+    try:
+        nm_res = subprocess.run(["nm", str(target_path)], capture_output=True, text=True)
+        if "asan" in nm_res.stdout.lower():
+            has_asan = True
+    except: pass
+
+    # 决策：是否使用 Valgrind
+    # 如果有 ASan 就不加 Valgrind，否则压力测试必崩
+    use_valgrind = (name in ["test_stress", "test_backpressure"]) and (not has_asan)
+    
+    cmd = []
+    val_log = f"valgrind_{name}.log"
+    if use_valgrind:
+        cmd = ["valgrind", "--leak-check=full", f"--log-file={val_log}", str(target_path)]
+    else:
+        cmd = [str(target_path)]
+
+    print(f"  -> Running {name}...", end="", flush=True)
+    try:
+        # 增加超时，防止压力测试死锁
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=120)
+        status = "PASS" if result.returncode == 0 else "FAIL"
+        
+        output = result.stdout + result.stderr
+        if use_valgrind and Path(val_log).exists():
+            output += "\n\n[Valgrind Analysis]\n" + Path(val_log).read_text()
+            Path(val_log).unlink()
+            
+        print(f" [{status}]")
+        return name, status, output
+    except subprocess.TimeoutExpired:
+        print(" [TIMEOUT]")
+        return name, "TIMEOUT", "Execution exceeded 120s."
+    except Exception as e:
+        print(" [ERROR]")
+        return name, "ERROR", str(e)
+
+def generate_report(build_log: str, results: List[Tuple[str, str, str]]):
+    """生成最终 Markdown 报告"""
+    with open(REPORT_FILE, "w", encoding="utf-8") as f:
+        f.write("# TinyWebServer V3 自动化审计报告\n\n")
+        f.write(f"- **时间:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("- **模式:** Release (-O3) + AddressSanitizer\n\n")
+        
+        f.write("## 1. 编译状态\n")
+        success = "成功" if "Error" not in build_log else "失败"
+        f.write(f"状态: **{success}**\n")
+        f.write("```text\n" + build_log[-1000:] + "\n```\n\n")
+        
+        f.write("## 2. 测试概览\n")
+        f.write("| 测试项 | 状态 | 详细链接 |\n| :--- | :--- | :--- |\n")
+        for name, status, _ in results:
+            f.write(f"| {name} | {status} | [查看详情](#{name}) |\n")
+        
+        f.write("\n## 3. 详细输出\n")
+        for name, status, out in results:
+            f.write(f"### <a name=\"{name}\"></a>{name} ({status})\n")
+            f.write("```text\n" + (out if out else "No output.") + "\n```\n\n")
 
 def main():
-    parser = argparse.ArgumentParser()
-    sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("build")
-    sub.add_parser("test")
-    sub.add_parser("clean")
-    sub.add_parser("all")
-    debug_p = sub.add_parser("debug")
-    debug_p.add_argument("--target", required=True)
-
+    parser = argparse.ArgumentParser(description="V3 Build & Test Tools")
+    parser.add_argument("command", choices=["build", "test", "clean", "all"], 
+                        help="Command to execute")
     args = parser.parse_args()
-
-    c_log, b_log, t_res, g_log = "", "", [], ""
 
     if args.command == "clean":
         clean()
+    
     elif args.command == "build":
-        cmake_configure(); cmake_build()
+        cmake_configure()
+        cmake_build()
+        
     elif args.command == "test":
-        t_res = run_all_tests_parallel()
-    elif args.command == "all":
-        c_log = cmake_configure()
-        b_log = cmake_build()
-        t_res = run_all_tests_parallel()
-        write_report(c_log, b_log, t_res)
-    elif args.command == "debug":
-        g_log = run_gdb(args.target)
-        write_report("Skipped", "Skipped", [], g_log)
+        if not BUILD_DIR.exists():
+            print("[Error] Build directory not found. Run 'build' first.")
+            return
+        results = []
+        for t in TEST_EXECUTABLES:
+            results.append(run_test(t))
+        generate_report("Manual Test Run", results)
+        print(f"\n[Done] Report: {REPORT_FILE}")
 
-    if t_res:
-        print("\n=== Test Summary ===")
-        for name, status, _ in sorted(t_res):
-            print(f"{name}: {status}")
+    elif args.command == "all":
+        clean()
+        cmake_configure()
+        b_log = cmake_build()
+        results = []
+        for t in TEST_EXECUTABLES:
+            results.append(run_test(t))
+        generate_report(b_log, results)
+        print(f"\n[Done] Report: {REPORT_FILE}")
 
 if __name__ == "__main__":
     main()
