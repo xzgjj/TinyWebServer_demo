@@ -48,12 +48,15 @@ accept() ───────▶│ Connection │
 
 ## 架构与步骤
 
-框架演进路线
-v2   线程池
-v3： 实现http
-v4   定时 和 异步日志
-v5   mmp零拷贝  态资源系统和
-v6   线程池优化 参考项目
+框架演进路线 /
+v2   线程池 /
+v3： 实现http /
+v4   定时 和 异步日志 /
+v5   mmp零拷贝  态资源系统和 / 火焰图
+v6   线程池优化 参考项目  /
+
+性能 /
+QPS   平均延迟   并发支持 内存分配
 
 
 ##  实现
@@ -197,3 +200,5 @@ python3 tools.py all
 sudo kill -9 $(sudo lsof -t -i:8080)
 # 强制杀死所有名为 server 的进程
 pkill -9 server
+
+/test_log_bench 8 200000
