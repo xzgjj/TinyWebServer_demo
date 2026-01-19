@@ -177,6 +177,7 @@ make
 终端 2 (运行测试脚本):
 
 根目录运行测试
+python3 tools.py build
 python3 tools.py test
 
 使用 GDB 调试特定测试
