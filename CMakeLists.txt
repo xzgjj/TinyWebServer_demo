@@ -42,10 +42,14 @@ add_library(webserver_core STATIC
     src/socket_utils.cpp
     src/error.cpp
     src/http_request.cpp
+    src/timer_manager.cpp
     src/server.cpp
     src/thread_pool.cpp
 )
 target_link_libraries(webserver_core PRIVATE Threads::Threads)
+
+add_executable(test_timer test/test_timer.cpp)
+target_link_libraries(test_timer PRIVATE webserver_core Threads::Threads)
 
 # --- 6. 构建主程序 ---
 add_executable(server src/main.cpp)

@@ -1,41 +1,51 @@
 
 
-
 // epoll_reactor.h
-#pragma once
-#include "connection.h"
+#ifndef EPOLL_REACTOR_H
+#define EPOLL_REACTOR_H
+
+#include <sys/epoll.h>
 #include <unordered_map>
 #include <memory>
-#include <array>
+#include <mutex>
+#include <string>
 #include <functional>
-#include <sys/epoll.h>
+#include "connection.h"
+#include "timer_manager.h"
+
+// 定义回调类型
+using MessageCallback = std::function<void(std::shared_ptr<Connection>, const std::string&)>;
 
 class EpollReactor {
 public:
-    // 定义回调类型
-    using OnMessageCallback = std::function<void(std::shared_ptr<Connection>, const std::string&)>;
-
+    EpollReactor();
     explicit EpollReactor(int listen_fd);
     ~EpollReactor();
 
-    // 设置回调函数
-    void SetOnMessage(OnMessageCallback cb) { on_message_ = std::move(cb); }
-
     void Run();
+    void Stop();
+    
+    // 修复：添加这些被 Server.cpp 或 EpollReactor.cpp 使用的成员函数
+    void HandleRead(int fd);
+    void HandleWrite(int fd);
+    void AddConnection(int fd);
+    void RemoveConnection(int fd);
+    void HandleAccept(); 
+    void SetOnMessage(MessageCallback cb) { on_message_ = cb; }
+    void UpdateEvent(int fd, uint32_t events);
 
 private:
-    // 处理新连接
-    void HandleAccept();
-    // 修改监听事件（由 Read 变为 Read|Write）
-    void UpdateInterest(int fd, uint32_t events);
-    // 移除连接
-    void RemoveConnection(int fd);
-
-    int listen_fd_;
     int epoll_fd_;
+    int listen_fd_;
+    bool running_;
     
-    // 核心存储：fd 映射到智能指针
+    static const int MAX_EVENTS = 1024;
+    struct epoll_event events_[MAX_EVENTS];
+
+    std::mutex conn_mutex_;
     std::unordered_map<int, std::shared_ptr<Connection>> connections_;
-    std::array<epoll_event, 64> events_;
-    OnMessageCallback on_message_;
+    std::unique_ptr<TimerManager> timer_manager_;
+    MessageCallback on_message_; // 存储业务回调
 };
+
+#endif

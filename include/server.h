@@ -26,18 +26,18 @@ public:
     }
 
     // 启动服务器（进入阻塞循环）
-    void Start();
+    void Start();  
+    void Stop();// 停止服务器
 
-    // 停止服务器
-    void Stop();
+    std::shared_ptr<ThreadPool> GetThreadPool() { return thread_pool_; }
 
 private:
     // 初始化监听 Socket
     int CreateListenFd(const std::string& ip, int port);
-
-    int listen_fd_;
-    std::unique_ptr<EpollReactor> reactor_;
     std::shared_ptr<ThreadPool> thread_pool_;
+ 
+    int listen_fd_;
+    std::unique_ptr<EpollReactor> reactor_;   
     Connection::MessageCallback on_message_;
 };
 
