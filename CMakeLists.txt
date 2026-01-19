@@ -2,61 +2,63 @@
 cmake_minimum_required(VERSION 3.16)
 project(TinyWebServer VERSION 3.0 LANGUAGES CXX)
 
-# --- 1. 基础标准设置 ---
+# --- 1. 编译选项与开关 ---
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
 
-# 如果没指定模式，默认使用 Release 模式（为了跑 -O3）
+# 增加开关：默认开启 ASan（安全性优先），性能测试时手动通过 -DENABLE_ASAN=OFF 关闭
+option(ENABLE_ASAN "Enable AddressSanitizer for debugging" ON)
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# --- 2. 核心编译标志设置 ---
-# 无论 Debug 还是 Release，都建议保留 -g 以便在崩溃时看到堆栈
-set(COMMON_FLAGS "-Wall -Wextra -Wno-unused-variable -g -fno-omit-frame-pointer")
+# 通用优化标志：-march=native 允许编译器使用当前 CPU 的所有特指令集 (如 AVX2)
+set(COMMON_FLAGS "-Wall -Wextra -g -fno-omit-frame-pointer -march=native")
 
-# Debug 模式：-O0，方便 GDB 调试逻辑
+# 处理 Sanitizer 逻辑
+if(ENABLE_ASAN)
+    set(SAN_FLAGS "-fsanitize=address")
+    message(STATUS "Build with ASan: ENABLED (Safety first, lower performance)")
+else()
+    set(SAN_FLAGS "")
+    message(STATUS "Build with ASan: DISABLED (Full performance mode)")
+endif()
+
+# Debug 模式
 set(CMAKE_CXX_FLAGS_DEBUG "${COMMON_FLAGS} -O0")
 
-# Release 模式：-O3 极致优化 + ASan 内存审计
-# 注意：开启 ASan 后，运行时严禁挂载 Valgrind，两者会冲突导致 SIGSEGV
-set(CMAKE_CXX_FLAGS_RELEASE "${COMMON_FLAGS} -O3 -fsanitize=address")
+# Release 模式：应用极致优化
+set(CMAKE_CXX_FLAGS_RELEASE "${COMMON_FLAGS} -O3 ${SAN_FLAGS}")
+set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${SAN_FLAGS}")
 
-# 确保链接阶段也加入 ASan 库
-set(CMAKE_EXE_LINKER_FLAGS_RELEASE "-fsanitize=address")
-
-# --- 3. 查找依赖 ---
+# --- 2. 依赖与核心库 ---
 find_package(Threads REQUIRED)
 
-# --- 4. 包含路径 ---
-include_directories(${PROJECT_SOURCE_DIR}/include)
-include_directories(${PROJECT_SOURCE_DIR}/include/reactor)
-include_directories(${PROJECT_SOURCE_DIR}/test)
-
-# --- 5. 构建核心静态库 (webserver_core) ---
-# 确保所有 V3 的源文件都在这里
-add_library(webserver_core STATIC
-    src/epoll_reactor.cpp
-    src/connection.cpp
-    src/socket_utils.cpp
-    src/error.cpp
-    src/http_request.cpp
-    src/timer_manager.cpp
-    src/server.cpp
-    src/thread_pool.cpp
+# 使用 Interface 库统一管理包含路径
+add_library(project_configs INTERFACE)
+target_include_directories(project_configs INTERFACE 
+    ${PROJECT_SOURCE_DIR}/include 
+    ${PROJECT_SOURCE_DIR}/include/reactor
+    ${PROJECT_SOURCE_DIR}/test
 )
-target_link_libraries(webserver_core PRIVATE Threads::Threads)
 
-add_executable(test_timer test/test_timer.cpp)
-target_link_libraries(test_timer PRIVATE webserver_core Threads::Threads)
+# 核心静态库源文件
+file(GLOB CORE_SOURCES "src/*.cpp")
+list(REMOVE_ITEM CORE_SOURCES "${PROJECT_SOURCE_DIR}/src/main.cpp")
 
-# --- 6. 构建主程序 ---
+add_library(webserver_core STATIC ${CORE_SOURCES})
+target_link_libraries(webserver_core PUBLIC Threads::Threads project_configs)
+
+# --- 3. 构建主程序 ---
 add_executable(server src/main.cpp)
 target_link_libraries(server PRIVATE webserver_core)
 
-# --- 7. 构建测试集 ---
-set(TEST_PROGS
+# --- 4. 自动化测试分类管理 ---
+
+# A. 功能与集成测试
+set(INTEGRATION_TESTS
+    test_timer
     test_lifecycle
     test_single_connection
     test_multi_connection
@@ -66,7 +68,19 @@ set(TEST_PROGS
     test_main
 )
 
-foreach(t ${TEST_PROGS})
+# B. 性能基准测试
+set(BENCHMARK_TESTS
+    test_log_bench
+)
+
+# 批量生成集成测试目标
+foreach(t ${INTEGRATION_TESTS})
     add_executable(${t} test/${t}.cpp)
     target_link_libraries(${t} PRIVATE webserver_core)
+endforeach()
+
+# 批量生成基准测试目标
+foreach(b ${BENCHMARK_TESTS})
+    add_executable(${b} test/${b}.cpp)
+    target_link_libraries(${b} PRIVATE webserver_core)
 endforeach()

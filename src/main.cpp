@@ -5,6 +5,7 @@
 #include "server.h"
 #include "http_request.h"
 #include "connection.h"
+#include "Logger.h"
 
 bool g_running = true;
 
@@ -16,27 +17,27 @@ void signal_handler(int sig) {
 
 int main() 
 {
+    Logger::GetInstance().Init("./tiny_server.log");
+    LOG_INFO("Server starting on port %d...", 8080);
+
     signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
 
     // 完全托管给 Server 类
     Server server("0.0.0.0", 8080);
     std::cout << "[Server] TinyWebServer V3 (FSM Protocol) on port 8080" << std::endl;
-
     
-    // 关键点：这里要换成你 thread_pool.h 里实际定义的函数名
-    // src/main.cpp
-    // src/main.cpp
-    server.SetOnMessage([&server](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
-        server.GetThreadPool()->AddTask([conn]() {
-            auto parser = conn->GetHttpParser();
-            auto& buffer = conn->GetInputBuffer(); // 假设这是 std::string
+    server.SetOnMessage([](std::shared_ptr<Connection> conn, const std::string& data) {
+        LOG_INFO("Message received from FD: %d", conn->GetFd());
+        
+        auto parser = conn->GetHttpParser();
+        auto& buffer = conn->GetInputBuffer();
 
-            if (buffer.empty()) return;
+        // 如果缓冲区为空，直接返回
+        if (buffer.empty()) return;
 
         // 执行解析
-            if (parser->Parse(buffer)) {
-                std::string path = parser->GetPath();
+        if (parser->Parse(buffer)) {
+            std::string path = parser->GetPath();
             
             // 构造简单的 HTTP 响应
             std::string body = "<html><body><h1>TinyWebServer V3</h1><p>Path: " + path + "</p></body></html>";
@@ -48,13 +49,11 @@ int main()
             // 发送数据
             conn->Send(header + body);
 
-            // --- 核心修复点 ---
-            // 解析并响应成功后，必须清空缓冲区和重置解析器状态
+            // 解析并响应成功后，清空缓冲区和重置解析器状态
             conn->ClearReadBuffer(); 
             parser->Reset();
-            }
-        // 如果 Parse 返回 false，说明数据不全，我们保留 buffer，等待下一次 HandleRead 拼接
-        });
+        }
+        // 如果 Parse 返回 false，说明数据不全，保留 buffer，等待下一次 HandleRead 拼接
     });
     
     std::cout << "[Server] TinyWebServer V3 is running..." << std::endl;
