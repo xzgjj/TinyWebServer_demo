@@ -2,70 +2,75 @@
 #include <iostream>
 #include <csignal>
 #include <memory>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "server.h"
+#include "http_response.h"
 #include "http_request.h"
 #include "connection.h"
 #include "Logger.h"
 
-bool g_running = true;
+int main() {
+    // 1. 确保环境收敛：创建资源目录
+    struct stat st;
+    if (stat("./www", &st) != 0) {
+        mkdir("./www", 0755);
+        // 创建默认首页以防 404 导致集成测试失败
+        system("echo '<h1>TinyWebServer V3</h1>' > ./www/index.html");
+    }
 
-void signal_handler(int sig) {
-    (void)sig;
-    g_running = false;
-    std::cout << "\n[Server] Shutdown signal received." << std::endl;
-}
-
-int main() 
-{
-    Logger::GetInstance().Init("./tiny_server.log");
-    LOG_INFO("Server starting on port %d...", 8080);
-
-    signal(SIGINT, signal_handler);
-
-    // 完全托管给 Server 类
+    Logger::GetInstance().Init("./tiny_server.log", LogLevel::LOG_LEVEL_DEBUG);
     Server server("0.0.0.0", 8080);
-    std::cout << "[Server] TinyWebServer  (FSM Protocol) on port 8080" << std::endl;
-    
-    server.SetOnMessage([](std::shared_ptr<Connection> conn, const std::string& data) {
-        LOG_INFO("Message received from FD: %d, data size: %zu", conn->GetFd(), data.size());
-        
-        // 通过新的公共方法获取 HTTP 解析器和输入缓冲区
+
+    server.SetOnMessage([](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
         auto parser = conn->GetHttpParser();
         auto& buffer = conn->GetInputBuffer();
 
-        // 如果缓冲区为空，直接返回
-        if (buffer.empty()) return;
+        // 核心修复：循环处理，直到缓冲区数据不足以构成一个完整 Header
+        while (true) {
+            size_t header_end = buffer.find("\r\n\r\n");
+            if (header_end == std::string::npos) {
+                break; // 数据不足，跳出等待下次 Read
+            }
 
-        // 执行解析
-        if (parser->Parse(buffer)) {
-            std::string path = parser->GetPath();
-            
-            // 构造简单的 HTTP 响应
-            std::string body = "<html><body><h1>TinyWebServer V3</h1><p>Path: " + path + "</p></body></html>";
-            std::string header = "HTTP/1.1 200 OK\r\n"
-                                 "Content-Type: text/html\r\n"
-                                 "Content-Length: " + std::to_string(body.size()) + "\r\n"
-                                 "Connection: close\r\n\r\n";
-            
-            // 发送数据
-            conn->Send(header + body);
+            if (parser->Parse(buffer)) {
+                HttpResponse response;
+                // 确保 Init 逻辑能正确处理路径
+                response.Init("./www", parser->GetPath(), false); 
+                response.MakeResponse();
 
-            // 解析并响应成功后，清空缓冲区和重置解析器状态
-            conn->ClearReadBuffer(); 
-            parser->Reset();  // 假设 HttpRequest 有 Reset 方法
-        } else {
-            // 如果 Parse 返回 false，说明数据不全，保留 buffer，等待下一次 HandleRead 拼接
-            LOG_DEBUG("Incomplete HTTP request, waiting for more data from FD: %d", conn->GetFd());
+                // 异步发送：Reactor 会处理发送队列
+                conn->Send(response.GetHeaderString());
+                if (response.HasFileBody()) {
+                    conn->Send(response.GetFileBody()); 
+                } else {
+                    conn->Send(response.GetBodyString());
+                }
+
+                // --- 关键：精确消耗已解析的数据 ---
+                // 注意：这里假设 Parse 仅处理了 Header，Body 逻辑需视业务而定
+                // 在当前简单模型下，我们移除到 \r\n\r\n 之后
+                buffer.erase(0, header_end + 4); 
+                
+                int status_code = response.GetCode();
+                parser->Reset(); // 为下一次解析重置状态
+
+                // 如果出错，则优雅关闭写端
+                if (status_code >= 400) {
+                    conn->Shutdown();
+                    break;
+                }
+            } else {
+                // 解析协议错误，清除坏数据并断开
+                buffer.clear();
+                conn->Shutdown();
+                break;
+            }
         }
     });
-    
-    std::cout << "[Server] TinyWebServer demo is running..." << std::endl;
+
+    LOG_INFO("Server starting on port 8080...");
     server.Start();
-    
     server.Run();
-    
-    server.Stop();
-    LOG_INFO("Server stopped gracefully.");
-    
     return 0;
 }

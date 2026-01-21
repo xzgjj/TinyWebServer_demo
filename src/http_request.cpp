@@ -1,65 +1,29 @@
 
 
 //有限状态机实现
-
 #include "http_request.h"
-#include <sstream>
-#include <iostream>
+#include "http_response.h"
+#include "Logger.h"
+#include <fcntl.h>
+#include <sys/stat.h>
+
+
+
+
 
 bool HttpRequest::Parse(std::string& buffer) {
-    const size_t MAX_LINE_SIZE = 8192; // 限制单行 8KB
+    size_t end_pos = buffer.find("\r\n\r\n");
+    if (end_pos == std::string::npos) return false;
+
+    size_t first_space = buffer.find(' ');
+    size_t second_space = buffer.find(' ', first_space + 1);
     
-    while (state_ != ParseState::FINISH && state_ != ParseState::ERROR) {
-        size_t pos = buffer.find("\r\n");
-        if (pos == std::string::npos) {
-            // 安全限制：如果还没收到换行但 buffer 已经超长，判定为恶意攻击
-            if (buffer.size() > MAX_LINE_SIZE) state_ = ParseState::ERROR;
-            return false; 
-        }
-
-        if (pos > MAX_LINE_SIZE) {
-            state_ = ParseState::ERROR;
-            return false;
-        }
-
-        std::string line = buffer.substr(0, pos);
-        buffer.erase(0, pos + 2); 
-
-        if (state_ == ParseState::REQUEST_LINE) {
-            if (!ParseRequestLine(line)) state_ = ParseState::ERROR;
-            else state_ = ParseState::HEADERS;
-        } 
-        else if (state_ == ParseState::HEADERS) {
-            if (line.empty()) {
-                state_ = ParseState::FINISH; 
-            } else {
-                if (!ParseHeader(line)) state_ = ParseState::ERROR;
-            }
-        }
+    if (first_space != std::string::npos && second_space != std::string::npos) {
+        path_ = buffer.substr(first_space + 1, second_space - first_space - 1);
+        if (path_ == "/") path_ = "/index.html";
+        is_finished_ = true;
+        return true;
     }
-    return state_ == ParseState::FINISH;
+    return false;
 }
 
-bool HttpRequest::ParseRequestLine(const std::string& line) {
-    std::stringstream ss(line);
-    // 增加对非法 Method 的检查
-    if (!(ss >> method_ >> path_ >> version_)) return false;
-    if (method_ != "GET" && method_ != "POST") return false; // 简单限制
-    return true;
-}
-
-bool HttpRequest::ParseHeader(const std::string& line) {
-    size_t pos = line.find(": ");
-    if (pos != std::string::npos) {
-        std::string key = line.substr(0, pos);
-        std::string val = line.substr(pos + 2);
-        headers_[key] = val;
-    }
-    return true;
-}
-
-void HttpRequest::Reset() {
-    state_ = ParseState::REQUEST_LINE;
-    method_ = path_ = version_ = body_ = "";
-    headers_.clear();
-}

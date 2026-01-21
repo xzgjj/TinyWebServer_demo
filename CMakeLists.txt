@@ -72,6 +72,9 @@ set(CORE_SOURCES_LIST
     src/http_request.cpp
     src/http_parser.cpp
     src/thread_pool.cpp
+    src/error.cpp
+    src/static_resource_manager.cpp
+    src/http_response.cpp
     src/Logger.cpp
     src/async_Logger.cpp
     reactor/event_loop.cpp

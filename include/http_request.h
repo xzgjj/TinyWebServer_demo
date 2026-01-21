@@ -1,35 +1,47 @@
-//
+//重构了响应逻辑，支持内存缓冲和零拷贝文件块的混合管理。
 
 #ifndef HTTP_REQUEST_H
 #define HTTP_REQUEST_H
 
 #include <string>
-#include <unordered_map>
 
-enum class ParseState { REQUEST_LINE, HEADERS, BODY, FINISH, ERROR };
-
+/**
+ * @brief HTTP 请求解析类
+ * 负责从 Buffer 中提取请求行，主要获取资源路径
+ */
 class HttpRequest {
 public:
-    HttpRequest() : state_(ParseState::REQUEST_LINE) {}
+    HttpRequest() { Reset(); }
+    ~HttpRequest() = default;
 
-    // 解析主入口：传入缓冲区，返回是否解析完成
-    bool Parse(std::string& buffer); 
-    
-    bool IsFinish() const { return state_ == ParseState::FINISH; }
-    bool IsError() const { return state_ == ParseState::ERROR; }
-    void Reset();
+    /**
+     * @brief 基础 HTTP 解析
+     * @param buffer 接收缓冲区
+     * @return true 表示解析完成且合法，false 表示数据不足或格式非法
+     */
+    bool Parse(std::string& buffer);
 
+    /**
+     * @brief 获取请求的资源路径
+     */
     std::string GetPath() const { return path_; }
-    std::string GetMethod() const { return method_; }
+    
+    /**
+     * @brief 重置解析器状态（用于连接复用）
+     */
+    void Reset() {
+        path_ = "";
+        is_finished_ = false;
+    }
+
+    /**
+     * @brief 检查解析是否已完成
+     */
+    bool IsFinished() const { return is_finished_; }
 
 private:
-    bool ParseRequestLine(const std::string& line);
-    bool ParseHeader(const std::string& line);
-
-    ParseState state_;
-    std::string method_, path_, version_;
-    std::unordered_map<std::string, std::string> headers_;
-    std::string body_;
+    std::string path_;
+    bool is_finished_;
 };
 
-#endif
+#endif // HTTP_REQUEST_H

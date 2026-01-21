@@ -1,10 +1,15 @@
 //
 
 #include "connection.h"
+#include "http_request.h" 
+#include "server_metrics.h"
 #include "reactor/event_loop.h"
 #include "Logger.h"
+
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/uio.h> // writev
+
 
 Connection::Connection(int fd, EventLoop* loop)
     : loop_(loop), fd_(fd), state_(ConnState::kConnecting),
@@ -13,7 +18,7 @@ Connection::Connection(int fd, EventLoop* loop)
 
 Connection::~Connection() {
     LOG_DEBUG("Connection dtor fd=%d", fd_);
-    close(fd_);
+    ::close(fd_);
 }
 
 void Connection::ConnectEstablished() {
@@ -22,10 +27,8 @@ void Connection::ConnectEstablished() {
     }
     
     state_ = ConnState::kConnected;
-    
     std::weak_ptr<Connection> weak_self(shared_from_this());
     
-    // 修改点 1: 传入 fd_
     loop_->SetReadCallback(fd_, [weak_self](int fd){
         if (auto self = weak_self.lock()) self->HandleRead(fd);
     });
@@ -34,8 +37,11 @@ void Connection::ConnectEstablished() {
         if (auto self = weak_self.lock()) self->HandleWrite(fd);
     });
 
-    // 开启读事件 (ET 模式)
     loop_->UpdateEvent(fd_, EPOLLIN | EPOLLET);
+}
+
+void Connection::Send(const char* data, size_t len) {
+    Send(std::string(data, len));
 }
 
 void Connection::Send(const std::string& data) {
@@ -44,51 +50,42 @@ void Connection::Send(const std::string& data) {
     if (loop_->IsInLoopThread()) {
         SendInLoop(data);
     } else {
-        // 跨线程调用：将发送任务转移到 IO 线程
-        loop_->RunInLoop(
-            [self = shared_from_this(), data]() { 
-                self->SendInLoop(data); 
-            }
-        );
+        loop_->RunInLoop([self = shared_from_this(), data]() { 
+            self->SendInLoop(data); 
+        });
+    }
+}
+
+void Connection::Send(std::shared_ptr<StaticResource> resource) {
+    if (state_ != ConnState::kConnected || !resource) return;
+
+    if (loop_->IsInLoopThread()) {
+        SendResourceInLoop(resource);
+    } else {
+        loop_->RunInLoop([self = shared_from_this(), resource]() { 
+            self->SendResourceInLoop(resource); 
+        });
     }
 }
 
 void Connection::SendInLoop(const std::string& data) {
-    ssize_t nwrote = 0;
-    size_t remaining = data.size();
-    bool fault_error = false;
+    if (data.empty()) return;
+    output_buffer_.Append(data);
+    // 尝试直接触发一次写操作，尽快将数据发出去
+    // 只有当之前没有注册 EPOLLOUT 时才尝试直接写，避免乱序
+    // 这里简化逻辑：直接调用 HandleWrite，它会处理好 writev 和事件注册
+    HandleWrite(fd_); 
+}
 
-    // 1. 如果当前缓冲区为空，尝试直接写入 socket
-    if (output_buffer_.empty()) {
-        nwrote = write(fd_, data.data(), remaining);
-        if (nwrote >= 0) {
-            remaining -= nwrote;
-            if (remaining == 0) {
-                // 写完了，无需关注 EPOLLOUT
-            }
-        } else {
-            nwrote = 0;
-            if (errno != EWOULDBLOCK) {
-                LOG_ERROR("SendInLoop write error");
-                if (errno == EPIPE || errno == ECONNRESET) {
-                    fault_error = true;
-                }
-            }
-        }
-    }
-
-    // 2. 如果没写完，追加到缓冲区并关注 EPOLLOUT
-    if (!fault_error && remaining > 0) {
-        output_buffer_.append(data.data() + nwrote, remaining);
-        // 注册写事件
-        loop_->UpdateEvent(fd_, EPOLLIN | EPOLLOUT | EPOLLET);
-    }
+void Connection::SendResourceInLoop(std::shared_ptr<StaticResource> res) {
+    if (!res || res->size == 0) return;
+    output_buffer_.Append(res);
+    HandleWrite(fd_);
 }
 
 void Connection::HandleRead(int fd) {
     char buf[4096];
-    bool error = false;
-    while (true) { // ET 模式核心修复：循环读
+    while (true) {
         ssize_t n = ::read(fd, buf, sizeof(buf));
         if (n > 0) {
             input_buffer_.append(buf, n);
@@ -97,36 +94,56 @@ void Connection::HandleRead(int fd) {
             break;
         } else {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                break; // 数据已读尽
+                break;
             }
-            LOG_ERROR("HandleRead error on fd=%d", fd);
+            LOG_ERROR("HandleRead error on fd=%d, err=%d", fd, errno);
             HandleError(fd);
             break;
         }
     }
-
     if (!input_buffer_.empty() && message_callback_) {
         message_callback_(shared_from_this(), input_buffer_);
     }
 }
 
-void Connection::HandleWrite(int fd) {
-    if (output_buffer_.empty()) {
-        // 只有当之前关注了写事件时，才重置为只读
-        // 建议在 Connection 中记录当前 events 状态以做对比
-        loop_->UpdateEvent(fd_, EPOLLIN | EPOLLET); 
-        return;
-    }
+// 【核心重构】支持聚集写和断点续传
+void Connection::HandleWrite(int fd)
+{
+    if (state_ == ConnState::kDisconnected) return;
 
-    ssize_t n = write(fd, output_buffer_.data(), output_buffer_.size());
-    if (n > 0) {
-        output_buffer_.erase(0, n);
-        if (output_buffer_.empty()) {
-            // 写完，取消关注 EPOLLOUT
-            loop_->UpdateEvent(fd_, EPOLLIN | EPOLLET);
+    struct iovec iov[16]; 
+    // 修改处：output_buffer_chain_ -> output_buffer_
+    int count = output_buffer_.GetIov(iov, 16);
+    
+    if (count > 0)
+    {
+        ssize_t n = ::writev(fd, iov, count);
+        if (n > 0)
+        {
+            // 修改处：output_buffer_chain_ -> output_buffer_
+            output_buffer_.Advance(static_cast<size_t>(n));
+            ServerMetrics::GetInstance().OnBytesSent(static_cast<size_t>(n));
+
+            if (output_buffer_.IsEmpty())
+            {
+                loop_->UpdateEvent(fd_, EPOLLIN | EPOLLET);
+                if (state_ == ConnState::kDisconnecting) ShutdownInLoop();
+            }
+            else
+            {
+                loop_->UpdateEvent(fd_, EPOLLIN | EPOLLOUT | EPOLLET);
+            }
         }
-    } else {
-        LOG_ERROR("HandleWrite error");
+        // ... 后续逻辑 ...
+        else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        {
+            loop_->UpdateEvent(fd_, EPOLLIN | EPOLLOUT | EPOLLET);
+        }
+        else
+        {
+            LOG_ERROR("HandleWrite fatal error on fd %d", fd);
+            HandleError(fd);
+        }
     }
 }
 
@@ -139,9 +156,13 @@ void Connection::Shutdown() {
 
 void Connection::ShutdownInLoop() {
     if (!loop_->IsInLoopThread()) return;
-    // 如果没有数据要发，直接关闭写端
-    if (output_buffer_.empty()) {
-        shutdown(fd_, SHUT_WR);
+    
+    // 只有当缓冲区为空时才真正关闭写端
+    if (output_buffer_.IsEmpty()) {
+        ::shutdown(fd_, SHUT_WR);
+    } else {
+        // 还有数据没发完，HandleWrite 发完后会再次调用 ShutdownInLoop
+        LOG_INFO("Shutdown pending, waiting buffer drain... fd=%d", fd_);
     }
 }
 
@@ -154,6 +175,5 @@ void Connection::HandleClose(int fd) {
 }
 
 void Connection::HandleError(int fd) {
-    LOG_ERROR("Connection error fd=%d err=%d", fd, errno);
     HandleClose(fd);
 }

@@ -119,6 +119,10 @@ def find_test_executable(target):
     return None
 
 def test(targets=None):
+    if not LOG_DIR.exists():
+        print(f">> 正在初始化缺失的日志目录: {LOG_DIR}")
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+    
     all_targets = read_test_targets_from_cmake()
     target_list = targets if targets else all_targets
     
