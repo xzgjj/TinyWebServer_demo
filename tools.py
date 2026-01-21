@@ -17,328 +17,286 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-# 完整流程（推荐） python3 tools.py all
-# 只构建   python3 tools.py build
-# 只测试  python3 tools.py test
-# gdb 调试某个测试  python3 tools.py debug --target test_epoll_server
-
-
-# python3 tools.py build --mode perf --clean
-# python3 tools.py test -only test_stress
-
-
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-
-
-
 import argparse
 import os
 import shutil
 import subprocess
 import sys
-import traceback
-from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple, Optional
+import re
+from datetime import datetime
 
+# 路径配置
 ROOT_DIR = Path(__file__).resolve().parent
 BUILD_DIR = ROOT_DIR / "build"
-REPORT_FILE = ROOT_DIR / "report.md"
+LOG_DIR = BUILD_DIR / "test_logs"
 
-# 必须与 CMakeLists.txt 中的目标名称严格匹配
-TEST_EXECUTABLES = [
-    "test_lifecycle",
-    "test_single_connection",
-    "test_multi_connection",
-    "test_client_close",
-    "test_backpressure",
-    "test_stress",
-    "test_main",
-    "test_multithread_reactor",
-    "test_basic",
-    "test_log_bench",
-]
-
-class TestRunner:
-    """测试运行器，增强错误处理和报告功能"""
+def read_test_targets_from_cmake():
+    """从CMakeLists.txt中解析测试目标列表"""
+    cmake_file = ROOT_DIR / "CMakeLists.txt"
+    test_targets = []
     
-    def __init__(self):
-        self.results: List[Tuple[str, str, str]] = []
-        self.build_log: str = ""
-        self.errors: List[str] = []
-        self.start_time = datetime.now()
-    
-    def log_error(self, msg: str):
-        """记录错误"""
-        self.errors.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
-        print(f"[Error] {msg}")
-    
-    def safe_run_test(self, name: str) -> Tuple[str, str, str]:
-        """安全运行测试，捕获所有异常"""
-        try:
-            return self._run_test_impl(name)
-        except Exception as e:
-            error_msg = f"运行测试 {name} 时发生异常: {str(e)}"
-            self.log_error(error_msg)
-            return name, "CRASHED", f"{error_msg}\n\n堆栈跟踪:\n{traceback.format_exc()}"
-    
-    def _run_test_impl(self, name: str) -> Tuple[str, str, str]:
-        """运行单个测试用例"""
-        target_path = BUILD_DIR / name
-        if not target_path.exists():
-            return name, "NOT FOUND", f"二进制文件 {name} 不存在于 {target_path}"
-
-        # 设置 ASan 环境变量
-        env = os.environ.copy()
-        env["ASAN_OPTIONS"] = "detect_leaks=1:halt_on_error=1:allocator_may_return_null=1"
-        
-        # 检查是否带有 ASan
-        has_asan = False
-        try:
-            nm_res = subprocess.run(["nm", str(target_path)], capture_output=True, text=True)
-            if "asan" in nm_res.stdout.lower():
-                has_asan = True
-        except: 
-            pass
-
-        # 智能设置超时时间
-        timeout_map = {
-            "test_log_bench": 300,      # 性能测试需要较长时间
-            "test_stress": 180,         # 压力测试
-            "test_backpressure": 180,    # 背压测试
-            "test_multi_connection": 60, # 多连接测试
-            "default": 30               # 默认超时
-        }
-        timeout = timeout_map.get(name, timeout_map["default"])
-        
-        # 决策：是否使用 Valgrind
-        use_valgrind = (name in ["test_stress", "test_backpressure"]) and (not has_asan)
-        
-        cmd = []
-        val_log = f"valgrind_{name}.log"
-        if use_valgrind:
-            cmd = ["valgrind", "--leak-check=full", f"--log-file={val_log}", str(target_path)]
-        else:
-            cmd = [str(target_path)]
-
-        print(f"  -> 运行 {name} (超时: {timeout}s)...", end="", flush=True)
-        try:
-            result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout)
-            status = "PASS" if result.returncode == 0 else "FAIL"
-            
-            output = result.stdout + result.stderr
-            if use_valgrind and Path(val_log).exists():
-                output += "\n\n[Valgrind Analysis]\n" + Path(val_log).read_text()
-                Path(val_log).unlink()
-                
-            print(f" [{status}]")
-            return name, status, output
-            
-        except subprocess.TimeoutExpired:
-            print(" [TIMEOUT]")
-            return name, "TIMEOUT", f"执行超过 {timeout} 秒，测试被终止"
-            
-        except KeyboardInterrupt:
-            print(" [INTERRUPTED]")
-            raise  # 重新抛出，让上层处理
-            
-        except Exception as e:
-            print(" [ERROR]")
-            return name, "ERROR", f"执行错误: {str(e)}"
-    
-    def generate_report(self, build_log: Optional[str] = None, 
-                       interrupted: bool = False,
-                       error: Optional[Exception] = None) -> bool:
-        """生成最终 Markdown 报告，返回是否成功"""
-        
-        if build_log:
-            self.build_log = build_log
-            
-        try:
-            # 计算测试统计
-            total = len(self.results)
-            passed = sum(1 for _, status, _ in self.results if status == "PASS")
-            failed = sum(1 for _, status, _ in self.results if status == "FAIL")
-            other = total - passed - failed
-            
-            # 计算运行时间
-            end_time = datetime.now()
-            duration = (end_time - self.start_time).total_seconds()
-            
-            with open(REPORT_FILE, "w", encoding="utf-8") as f:
-                f.write("# TinyWebServer V3 自动化审计报告\n\n")
-                f.write(f"- **生成时间:** {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"- **运行时长:** {duration:.1f} 秒\n")
-                f.write(f"- **模式:** Release (-O3) + AddressSanitizer\n")
-                
-                if interrupted:
-                    f.write("- **状态:** ⚠️ 测试被用户中断\n")
-                elif error:
-                    f.write(f"- **状态:** ❌ 测试执行失败: {str(error)}\n")
-                else:
-                    f.write(f"- **状态:** {'✅ 完成' if failed == 0 else '⚠️ 有测试失败'}\n")
-                
-                f.write(f"- **统计:** {total} 个测试，{passed} 通过，{failed} 失败，{other} 其他\n\n")
-                
-                # 错误信息部分（如果有）
-                if self.errors:
-                    f.write("## ⚠️ 执行错误\n")
-                    for err in self.errors:
-                        f.write(f"- {err}\n")
-                    f.write("\n")
-                
-                # 编译状态部分
-                f.write("## 1. 编译状态\n")
-                if self.build_log:
-                    success = "成功" if "Error" not in self.build_log else "失败"
-                    f.write(f"状态: **{success}**\n")
-                    f.write("```text\n" + self.build_log[-1000:] + "\n```\n\n")
-                else:
-                    f.write("状态: 未记录编译日志\n\n")
-                
-                # 测试概览
-                f.write("## 2. 测试概览\n")
-                f.write("| 测试项 | 状态 | 详细链接 |\n| :--- | :--- | :--- |\n")
-                for name, status, _ in self.results:
-                    # 使用状态图标
-                    status_icon = {
-                        "PASS": "✅",
-                        "FAIL": "❌", 
-                        "TIMEOUT": "⏰",
-                        "NOT FOUND": "🔍",
-                        "ERROR": "💥",
-                        "CRASHED": "💣"
-                    }.get(status, "❓")
-                    
-                    f.write(f"| {name} | {status_icon} {status} | [查看详情](#{name}) |\n")
-                
-                f.write("\n## 3. 详细输出\n")
-                for name, status, out in self.results:
-                    f.write(f'### <a name="{name}"></a>{name}\n')
-                    f.write(f"**状态:** {status}\n\n")
-                    f.write("```text\n")
-                    
-                    # 限制输出长度，避免报告过大
-                    max_output_length = 5000
-                    if out and len(out) > max_output_length:
-                        f.write(out[:max_output_length])
-                        f.write(f"\n\n... (输出过长，已截断，共 {len(out)} 字符)")
-                    else:
-                        f.write(out if out else "无输出")
-                    
-                    f.write("\n```\n\n")
-                
-                # 建议和总结
-                f.write("## 4. 总结与建议\n")
-                
-                if failed > 0:
-                    f.write("### ❌ 发现问题\n")
-                    failed_tests = [name for name, status, _ in self.results if status == "FAIL"]
-                    f.write(f"- 以下测试失败: {', '.join(failed_tests)}\n")
-                    f.write("- 建议检查网络连接、端口冲突或服务器配置\n")
-                
-                if any(status in ["TIMEOUT", "ERROR", "CRASHED"] for _, status, _ in self.results):
-                    f.write("### ⚠️ 异常情况\n")
-                    for name, status, _ in self.results:
-                        if status in ["TIMEOUT", "ERROR", "CRASHED"]:
-                            f.write(f"- {name}: {status}\n")
-                
-                if interrupted:
-                    f.write("### ⏸️ 测试被中断\n")
-                    f.write("- 用户按下了 Ctrl+C\n")
-                    f.write("- 部分测试可能没有完成\n")
-                    f.write("- 建议重新运行完整的测试流程\n")
-                
-                if passed == total and not interrupted and not error:
-                    f.write("### ✅ 所有测试通过\n")
-                    f.write("- 恭喜！所有测试都通过了\n")
-                    f.write("- 项目质量良好\n")
-            
-            print(f"[报告] 报告已生成: {REPORT_FILE}")
-            return True
-            
-        except Exception as e:
-            print(f"[错误] 生成报告失败: {e}")
-            # 尝试生成简单的错误报告
-            try:
-                with open(REPORT_FILE, "w", encoding="utf-8") as f:
-                    f.write("# 报告生成失败\n\n")
-                    f.write(f"错误: {str(e)}\n")
-                    f.write(f"时间: {datetime.now()}\n")
-                print(f"[报告] 已创建错误报告")
-            except:
-                print(f"[错误] 无法创建任何报告")
-            return False
-
-def main():
-    """主函数，增强错误处理"""
-    runner = TestRunner()
-    
-    parser = argparse.ArgumentParser(description="V3 Build & Test Tools")
-    parser.add_argument("command", choices=["build", "test", "clean", "all"], 
-                       help="Command to execute")
-    args = parser.parse_args()
+    if not cmake_file.exists():
+        print(f"[警告] 未找到CMakeLists.txt文件: {cmake_file}")
+        return ["test_timer", "test_lifecycle", "test_single_connection", "test_multi_connection", "test_stress"]
     
     try:
-        if args.command == "clean":
-            clean()
-        
-        elif args.command == "build":
-            runner.build_log = cmake_configure() + "\n" + cmake_build()
-            
-        elif args.command == "test":
-            if not BUILD_DIR.exists():
-                runner.log_error("构建目录不存在，请先运行 'build'")
-                print("[错误] 构建目录不存在。请运行: python3 tools.py build")
-                return
-            
-            print(f"[测试] 开始运行 {len(TEST_EXECUTABLES)} 个测试...")
-            for t in TEST_EXECUTABLES:
-                runner.results.append(runner.safe_run_test(t))
-            
-            # 生成报告
-            if runner.generate_report("手动测试运行"):
-                print(f"\n[完成] 报告已生成: {REPORT_FILE}")
-                # 显示简要统计
-                passed = sum(1 for _, status, _ in runner.results if status == "PASS")
-                total = len(runner.results)
-                print(f"[统计] {passed}/{total} 个测试通过")
-        
-        elif args.command == "all":
-            print("[开始] 执行完整流程...")
-            clean()
-            runner.build_log = cmake_configure() + "\n" + cmake_build()
-            
-            print(f"[测试] 开始运行 {len(TEST_EXECUTABLES)} 个测试...")
-            for t in TEST_EXECUTABLES:
-                runner.results.append(runner.safe_run_test(t))
-            
-            # 生成报告
-            if runner.generate_report():
-                print(f"\n[完成] 报告已生成: {REPORT_FILE}")
-                # 显示简要统计
-                passed = sum(1 for _, status, _ in runner.results if status == "PASS")
-                total = len(runner.results)
-                print(f"[统计] {passed}/{total} 个测试通过")
-    
-    except KeyboardInterrupt:
-        print("\n[中断] 用户中断了程序")
-        # 即使被中断也生成报告
-        runner.generate_report(interrupted=True)
-        print(f"[报告] 中断报告已生成: {REPORT_FILE}")
-        
+        with open(cmake_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+            # 匹配 set(INTEGRATION_TESTS ...) 块
+            match = re.search(r'set\(INTEGRATION_TESTS(.*?)\)', content, re.DOTALL)
+            if match:
+                targets = match.group(1).split()
+                test_targets.extend([t.strip() for t in targets if t.strip()])
     except Exception as e:
-        print(f"\n[崩溃] 程序发生未处理异常: {e}")
-        traceback.print_exc()
-        # 即使崩溃也尝试生成报告
-        runner.generate_report(error=e)
-        print(f"[报告] 错误报告已生成: {REPORT_FILE}")
-        sys.exit(1)
+        print(f"[错误] 解析CMakeLists.txt失败: {e}")
+    
+    return list(set(test_targets))
+
+def setup_build_dir(clean=False):
+    if clean and BUILD_DIR.exists():
+        shutil.rmtree(BUILD_DIR)
+    BUILD_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+def build(mode="Debug"):
+    setup_build_dir()
+    print(f">> 开始构建项目 [模式: {mode}]...")
+    try:
+        subprocess.run(["cmake", f"-DCMAKE_BUILD_TYPE={mode}", ".."], cwd=str(BUILD_DIR), check=True)
+        subprocess.run(["make", "-j4"], cwd=str(BUILD_DIR), check=True)
+        return True
+    except subprocess.CalledProcessError:
+        print(">> 构建失败！")
+        return False
+
+def save_test_log(name, stdout, stderr, ret_code):
+    log_file = LOG_DIR / f"{name}.log"
+    with open(log_file, "w", encoding="utf-8") as f:
+        f.write(f"--- TEST: {name} ---\n")
+        f.write(f"--- RETURN CODE: {ret_code} ---\n\n")
+        f.write("--- STDOUT ---\n")
+        f.write(stdout)
+        f.write("\n\n--- STDERR ---\n")
+        f.write(stderr)
+    return log_file
+
+def generate_audit_report(passed, failed):
+    """
+    生成增强版审计报告
+    1. 位置移动到根目录
+    2. 增加性能指标和错误深度解析
+    """
+    report_path = ROOT_DIR / "audit_report.md" # 修改：生成到根目录
+    
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("# TinyWebServer 自动化审计与性能报告\n\n")
+        f.write(f"- **生成时间:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        status_str = "❌ 存在失败项" if failed else "✅ 全部通过"
+        f.write(f"- **项目状态:** {status_str}\n")
+        f.write(f"- **测试概览:** 通过 {len(passed)}, 失败 {len(failed)}\n\n")
+        
+        f.write("## 详细测试概览\n")
+        # 扩展列：增加“性能指标/错误摘要”
+        f.write("| 测试项 | 状态 | 关键指标/错误摘要 | 详细日志 |\n")
+        f.write("| :--- | :--- | :--- | :--- |\n")
+        
+        for name, metrics in passed:
+            f.write(f"| {name} | ✅ 通过 | {metrics} | [Log](./build/test_logs/{name}.log) |\n")
+        
+        for name, reason, summary in failed:
+            f.write(f"| {name} | ❌ {reason} | `<span style='color:red'>{summary}</span>` | [Log](./build/test_logs/{name}.log) |\n")
+            
+        f.write("\n\n---\n*注：性能指标从标准输出中实时提取。若出现失败项(-6)，请检查日志中的 ASan 内存审计报告。*")
+    
+    print(f"\n>> 审计报告已更新: {report_path}")
+
+def find_test_executable(target):
+    # 递归查找可执行文件
+    for path in BUILD_DIR.rglob(target):
+        if path.is_file() and os.access(path, os.X_OK):
+            return path
+    return None
+
+def test(targets=None):
+    all_targets = read_test_targets_from_cmake()
+    target_list = targets if targets else all_targets
+    
+    passed_tests = []
+    failed_tests = []
+
+    # 启用 ASan 符号化输出环境变量
+    env = os.environ.copy()
+    env["ASAN_OPTIONS"] = "symbolize=1:break_on_error=1"
+
+    for t in target_list:
+        exe = find_test_executable(t)
+        if not exe:
+            print(f"[跳过] 未找到测试目标: {t}")
+            continue
+
+        print(f">> 正在运行 {t}...", end=" ", flush=True)
+        try:
+            # 增加超时处理
+            result = subprocess.run(
+                [str(exe)], 
+                capture_output=True, 
+                text=True, 
+                timeout=60, 
+                env=env,
+                cwd=str(BUILD_DIR)
+            )
+            
+            save_test_log(t, result.stdout, result.stderr, result.returncode)
+            
+            # 解析关键指标 (提取包含 QPS, logs/sec, ms, PASSED 等关键词的行)
+            combined_output = result.stdout + "\n" + result.stderr
+            metrics = "N/A"
+            for line in combined_output.split('\n'):
+                # 优先级匹配性能数据
+                if any(kw in line.upper() for kw in ["QPS", "LOGS/SEC", "LATENCY", "REQUESTS/S", "THROUGHPUT"]):
+                    metrics = line.strip()
+                    break
+                elif "PASSED" in line.upper():
+                    metrics = "Success"
+
+            if result.returncode == 0:
+                print("✅")
+                passed_tests.append((t, metrics))
+            else:
+                reason = f"失败({result.returncode})"
+                # 尝试从 stderr 提取 ASan 错误首行
+                err_summary = "Aborted (Check Logs)"
+                if "AddressSanitizer" in result.stderr:
+                    reason = "内存错误(ASan)"
+                    for line in result.stderr.split('\n'):
+                        if "ERROR: AddressSanitizer" in line:
+                            err_summary = line.strip()
+                            break
+                elif result.stderr.strip():
+                    err_summary = result.stderr.strip().split('\n')[-1]
+                
+                print(f"❌ [{reason}]")
+                failed_tests.append((t, reason, err_summary))
+
+        except subprocess.TimeoutExpired as e:
+            print("⏳ [超时]")
+            # 超时也尝试保存已产生的日志
+            stdout = e.stdout.decode() if e.stdout else ""
+            stderr = e.stderr.decode() if e.stderr else ""
+            save_test_log(t, stdout, stderr, "TIMEOUT")
+            failed_tests.append((t, "超时", "进程运行超过45秒限制"))
+        except Exception as e:
+            print(f"💥 [异常: {e}]")
+            failed_tests.append((t, "执行异常", str(e)))
+
+    generate_audit_report(passed_tests, failed_tests)
+    return len(failed_tests) == 0
+
+def debug(target):
+    exe = find_test_executable(target)
+    if exe:
+        subprocess.run(["gdb", str(exe)])
+    else:
+        print(f"[错误] 未找到可调试目标: {target}")
+
+def clean():
+    if BUILD_DIR.exists():
+        print(f">> 清理构建目录: {BUILD_DIR}")
+        shutil.rmtree(BUILD_DIR)
+
+# tools.py 优化片段
+
+def extract_rich_info(name, stdout, stderr, is_passed):
+    """
+    深度提取函数：在报告生成阶段，从输出中挖掘更多有效信息
+    """
+    combined = stdout + "\n" + stderr
+    info = []
+
+    if is_passed:
+        # 1. 提取性能指标 (增加更多匹配模式)
+        patterns = [
+            r"(\d+\.?\d* logs/sec)",         # 日志速率
+            r"(QPS: \d+)",                   # 每秒查询
+            r"(Latency: \d+\.?\d*ms)",       # 延迟
+            r"(Total: \d+ bytes)",           # 吞吐量
+            r"PASSED \((.*)\)"               # 捕获括号内的自定义成功说明
+        ]
+        for p in patterns:
+            match = re.search(p, combined)
+            if match: info.append(match.group(1))
+        
+        # 2. 提取并发规模
+        if "connection" in name:
+            conn_match = re.search(r"with (\d+) connections", combined)
+            if conn_match: info.append(f"Conns: {conn_match.group(1)}")
+            
+        return " | ".join(info) if info else "Success (No metrics)"
+
+    else:
+        # 3. 提取错误上下文 (针对你的 IsInLoopThread 报错)
+        if "Assertion `IsInLoopThread()'" in combined:
+            # 尝试定位是哪个类触发的
+            return "Thread Safety Error: EventLoop called from illegal thread"
+        
+        if "AddressSanitizer" in combined:
+            # 提取具体的内存错误类型
+            asan_match = re.search(r"ERROR: AddressSanitizer: ([\w-]+)", combined)
+            return f"ASan: {asan_match.group(1)}" if asan_match else "Memory Error"
+
+        # 4. 超时项提取最后一行有效日志，判断进度
+        lines = [l for l in stdout.split('\n') if l.strip()]
+        if lines:
+            return f"Last Msg: {lines[-1][:50]}..."
+            
+        return "Aborted"
+
+# 修改 generate_audit_report 中的循环逻辑
+# for name, stdout, stderr, ret in raw_results:
+#     metrics = extract_rich_info(name, stdout, stderr, ret == 0)
+#     ... 写入表格 ...
+
+
+def main():
+    parser = argparse.ArgumentParser(description="TinyWebServer 辅助工具 - 性能审计版")
+    subparsers = parser.add_subparsers(dest="command")
+    
+    add_m = lambda p: p.add_argument("-m", "--mode", choices=["debug", "perf"], default="debug", help="构建模式")
+    
+    all_p = subparsers.add_parser("all", help="全流程：清理+构建+测试")
+    add_m(all_p)
+    
+    build_p = subparsers.add_parser("build", help="仅执行构建")
+    add_m(build_p)
+    build_p.add_argument("-clean", action="store_true", help="构建前清理")
+    
+    test_p = subparsers.add_parser("test", help="运行测试并生成审计报告")
+    test_p.add_argument("-only", nargs="+", help="指定运行的测试项名称")
+    
+    debug_p = subparsers.add_parser("debug", help="使用GDB调试特定目标")
+    debug_p.add_argument("-target", required=True, help="测试目标名称")
+    
+    subparsers.add_parser("clean", help="仅清理构建目录")
+
+    args = parser.parse_args()
+    
+    if args.command == "all":
+        clean()
+        mode = "Debug" if args.mode == "debug" else "Release"
+        if build(mode): test()
+    elif args.command == "build":
+        if args.clean: clean()
+        mode = "Debug" if args.mode == "debug" else "Release"
+        build(mode)
+    elif args.command == "test":
+        test(args.only)
+    elif args.command == "debug":
+        debug(args.target)
+    elif args.command == "clean":
+        clean()
+    else:
+        parser.print_help()
 
 if __name__ == "__main__":
     main()

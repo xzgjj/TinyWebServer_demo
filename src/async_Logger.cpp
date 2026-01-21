@@ -167,101 +167,55 @@ void AsyncLogger::ThreadFunc()
 
     // 设置为行缓冲模式
     std::setvbuf(fp, nullptr, _IOLBF, 0);
-
-    while (running_.load(std::memory_order_acquire))
-    {
+    while (running_) {
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            
-            // 等待前端数据或超时，处理虚假唤醒
-            while (buffers_.empty() && running_.load(std::memory_order_acquire))
-            {
+            if (buffers_.empty()) {
                 cond_.wait_for(lock, std::chrono::seconds(flush_interval_));
             }
-
-            // 检查是否有当前缓冲区需要写入
-            if (current_buffer_ && current_buffer_->Length() > 0)
-            {
-                buffers_.push_back(std::move(current_buffer_));
-                current_buffer_ = std::move(buffer1);
-                buffer1.reset();
-            }
-
-            // 交换待写队列
-            if (!buffers_.empty())
-            {
-                buffers_to_write.swap(buffers_);
-                
-                // 确保有备用缓冲区
-                if (!next_buffer_ && buffer2)
-                {
-                    next_buffer_ = std::move(buffer2);
-                    buffer2.reset();
-                }
-            }
-
-            // 通知等待Flush的线程
-            if (buffers_to_write.empty() && buffers_.empty())
-            {
-                flush_cond_.notify_all();
+            // 将前端待写队列交换到后端执行
+            buffers_.push_back(std::move(current_buffer_));
+            current_buffer_ = std::move(buffer1);
+            buffers_to_write.swap(buffers_);
+            if (!next_buffer_) {
+                next_buffer_ = std::move(buffer2);
             }
         }
 
-        // 临界区外执行磁盘IO
-        if (!buffers_to_write.empty())
-        {
-            for (const auto& buffer : buffers_to_write)
-            {
-                if (buffer && buffer->Length() > 0)
-                {
-                    size_t written = std::fwrite(buffer->Data(), 1, 
-                                                static_cast<size_t>(buffer->Length()), fp);
-                    total_written_.fetch_add(written, std::memory_order_relaxed);
+        // --- 优化后的核心写入逻辑 ---
+        if (!buffers_to_write.empty()) {
+            for (auto& buffer : buffers_to_write) {
+                if (buffer && buffer->Length() > 0) {
+                    // 1. 写入文件
+                    size_t n = std::fwrite(buffer->Data(), 1, buffer->Length(), fp);
+                    total_written_.fetch_add(n, std::memory_order_relaxed);
                     
-                    if (written != static_cast<size_t>(buffer->Length()))
-                    {
-                        std::cerr << "Failed to write complete log: " 
-                                  << std::strerror(errno) << std::endl;
+                    if (n != static_cast<size_t>(buffer->Length())) {
+                        std::cerr << "Failed to write complete log" << std::endl;
                     }
-                }
-            }
-            
-            // 保留两个缓冲区备用
-            if (buffers_to_write.size() > 2)
-            {
-                buffers_to_write.resize(2);
-            }
 
-            // 回收缓冲区
-            for (auto& buffer : buffers_to_write)
-            {
-                if (buffer)
-                {
-                    if (!buffer1)
-                    {
+                    // 2. 直接在此处尝试回收 buffer 给 buffer1 或 buffer2
+                    buffer->Clear(); // 重置缓冲区指针
+                    if (!buffer1) {
                         buffer1 = std::move(buffer);
-                        if (buffer1)
-                            buffer1->Clear();
-                    }
-                    else if (!buffer2)
-                    {
+                    } else if (!buffer2) {
                         buffer2 = std::move(buffer);
-                        if (buffer2)
-                            buffer2->Clear();
                     }
-                    else
-                    {
-                        break; // 已有足够的备用缓冲区
-                    }
+                    // 超过 2 个的 buffer 会随着循环结束和 buffers_to_write.clear() 自动释放
                 }
             }
             
-            buffers_to_write.clear();
-            
-            // 强制刷盘
-            std::fflush(fp);
+            buffers_to_write.clear(); // 清空本轮已处理的队列
+            std::fflush(fp);          // 确保 OS 缓存刷入磁盘
+
+            // 3. 关键修复：唤醒可能正在等待 Flush() 的线程
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                flush_cond_.notify_all(); 
+            }
         }
     }
+    
 
     // 线程结束前，确保写入所有剩余数据
     WriteBuffersToFile();

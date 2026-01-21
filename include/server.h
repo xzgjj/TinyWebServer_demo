@@ -17,6 +17,7 @@ public:
     ~Server();
     void Start();
     void Stop();
+    void Run();
     
     // 设置消息回调
     void SetOnMessage(Connection::MessageCallback cb) { 
@@ -27,17 +28,20 @@ public:
     void RemoveConnection(int fd);
 
 private:
+
+    Connection::MessageCallback on_message_;
     void HandleAccept(int listen_fd);
     void NewConnection(int fd);
-    int CreateListenFd(const std::string& ip, int port);
+    
 
-    int listen_fd_;
-    std::unique_ptr<EventLoop> main_loop_;
+    std::unique_ptr<EventLoop> main_loop_;  
     std::unique_ptr<EventLoopThreadPool> thread_pool_;
-    Connection::MessageCallback on_message_;
+    int listen_fd_;
 
     std::mutex conn_mutex_;
     std::unordered_map<int, std::shared_ptr<Connection>> connections_;
 };
+
+int CreateListenSocket(unsigned short port);
 
 #endif

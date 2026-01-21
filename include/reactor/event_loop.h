@@ -45,8 +45,8 @@ public:
     
     // 设置回调
     void SetAcceptCallback(Functor cb) { accept_callback_ = std::move(cb); }
-    void SetReadCallback(std::function<void(int)> cb) { read_callback_ = std::move(cb); }
-    void SetWriteCallback(std::function<void(int)> cb) { write_callback_ = std::move(cb); }
+    void SetReadCallback(int fd, std::function<void(int)> cb) { read_callbacks_[fd] = std::move(cb); }
+    void SetWriteCallback(int fd, std::function<void(int)> cb) { write_callbacks_[fd] = std::move(cb); }
 
     bool IsInLoopThread() const noexcept {
         return thread_id_ == std::this_thread::get_id();
@@ -65,7 +65,7 @@ private:
     std::atomic<bool> quit_;
     std::atomic<bool> calling_pending_functors_;
     
-    const std::thread::id thread_id_;
+    std::thread::id thread_id_;
     
     int epoll_fd_;
     int wakeup_fd_;
@@ -78,8 +78,8 @@ private:
     
     // 事件回调
     Functor accept_callback_;
-    std::function<void(int)> read_callback_;
-    std::function<void(int)> write_callback_;
+    std::unordered_map<int, std::function<void(int)>> read_callbacks_; // 新增
+    std::unordered_map<int, std::function<void(int)>> write_callbacks_; // 新增
     
     // 记录已注册的文件描述符
     std::unordered_map<int, uint32_t> registered_fds_;

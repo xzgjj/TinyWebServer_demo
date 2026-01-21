@@ -7,7 +7,7 @@
 #include <sys/socket.h>
 
 Connection::Connection(int fd, EventLoop* loop)
-    : fd_(fd), loop_(loop), state_(ConnState::kConnecting),
+    : loop_(loop), fd_(fd), state_(ConnState::kConnecting),
       http_parser_(new HttpRequest()) {
 }
 
@@ -17,27 +17,21 @@ Connection::~Connection() {
 }
 
 void Connection::ConnectEstablished() {
-    // 必须在 IO 线程中执行
     if (!loop_->IsInLoopThread()) {
         LOG_FATAL("ConnectEstablished must be called in loop thread");
     }
     
     state_ = ConnState::kConnected;
     
-    // 绑定 Channel 回调
-    // 使用 weak_ptr 防止 Channel 持有 Connection 导致的循环引用
     std::weak_ptr<Connection> weak_self(shared_from_this());
     
-    loop_->SetReadCallback([weak_self](int fd){
-        if (auto self = weak_self.lock()) {
-            self->HandleRead(fd);
-        }
+    // 修改点 1: 传入 fd_
+    loop_->SetReadCallback(fd_, [weak_self](int fd){
+        if (auto self = weak_self.lock()) self->HandleRead(fd);
     });
     
-    loop_->SetWriteCallback([weak_self](int fd){
-        if (auto self = weak_self.lock()) {
-            self->HandleWrite(fd);
-        }
+    loop_->SetWriteCallback(fd_, [weak_self](int fd){
+        if (auto self = weak_self.lock()) self->HandleWrite(fd);
     });
 
     // 开启读事件 (ET 模式)
@@ -92,33 +86,35 @@ void Connection::SendInLoop(const std::string& data) {
 }
 
 void Connection::HandleRead(int fd) {
-    char buf[65536];
-    while (true) {
-        ssize_t n = read(fd, buf, sizeof(buf));
+    char buf[4096];
+    bool error = false;
+    while (true) { // ET 模式核心修复：循环读
+        ssize_t n = ::read(fd, buf, sizeof(buf));
         if (n > 0) {
             input_buffer_.append(buf, n);
-        } else if (n == -1) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                break; // 读完了
-            }
-            HandleError(fd);
-            return;
         } else if (n == 0) {
-            HandleClose(fd); // 对端关闭
-            return;
+            HandleClose(fd);
+            break;
+        } else {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break; // 数据已读尽
+            }
+            LOG_ERROR("HandleRead error on fd=%d", fd);
+            HandleError(fd);
+            break;
         }
     }
 
-    // 业务回调
-    if (message_callback_) {
+    if (!input_buffer_.empty() && message_callback_) {
         message_callback_(shared_from_this(), input_buffer_);
     }
 }
 
 void Connection::HandleWrite(int fd) {
     if (output_buffer_.empty()) {
-        // 缓冲区已空，停止关注写事件
-        loop_->UpdateEvent(fd_, EPOLLIN | EPOLLET);
+        // 只有当之前关注了写事件时，才重置为只读
+        // 建议在 Connection 中记录当前 events 状态以做对比
+        loop_->UpdateEvent(fd_, EPOLLIN | EPOLLET); 
         return;
     }
 

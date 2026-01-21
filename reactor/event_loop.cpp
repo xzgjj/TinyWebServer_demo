@@ -36,13 +36,14 @@ EventLoop::~EventLoop() {
 
 void EventLoop::Loop() {
     assert(!looping_);
-    assert(IsInLoopThread());
+    thread_id_ = std::this_thread::get_id(); // 在此处正式绑定执行线程
+    looping_ = true;
     
     looping_ = true;
     quit_ = false;
     
     while (!quit_) {
-        ProcessEvents(1000); // 1秒超时
+        ProcessEvents(10); // 将 1000ms 改为 10ms，提高退出响应速度
         DoPendingFunctors();
     }
     
@@ -82,25 +83,35 @@ void EventLoop::QueueInLoop(Functor cb) {
 }
 
 void EventLoop::UpdateEvent(int fd, uint32_t events) {
-    struct epoll_event ev;
-    ev.events = events;
-    ev.data.fd = fd;
-    
-    auto it = registered_fds_.find(fd);
-    if (it == registered_fds_.end()) {
-        // 新注册
-        if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev) < 0) {
-            LOG_ERROR("EventLoop::UpdateEvent epoll_ctl ADD failed for fd=%d", fd);
-            return;
+    // 1. 检查当前执行线程是否为该 EventLoop 绑定的 IO 线程
+    if (IsInLoopThread()) {
+        // 如果在 IO 线程，直接执行操作
+        struct epoll_event ev;
+        ev.events = events;
+        ev.data.fd = fd;
+        
+        auto it = registered_fds_.find(fd);
+        if (it == registered_fds_.end()) {
+            // 新注册
+            if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev) < 0) {
+                LOG_ERROR("EventLoop::UpdateEvent epoll_ctl ADD failed for fd=%d", fd);
+                return;
+            }
+            registered_fds_[fd] = events;
+        } else {
+            // 修改
+            if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev) < 0) {
+                LOG_ERROR("EventLoop::UpdateEvent epoll_ctl MOD failed for fd=%d", fd);
+                return;
+            }
+            registered_fds_[fd] = events;
         }
-        registered_fds_[fd] = events;
     } else {
-        // 修改
-        if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev) < 0) {
-            LOG_ERROR("EventLoop::UpdateEvent epoll_ctl MOD failed for fd=%d", fd);
-            return;
-        }
-        registered_fds_[fd] = events;
+        // 2. 如果不在 IO 线程，通过 RunInLoop 将操作转移（Dispatch）到 IO 线程执行
+        // 确保对 epoll_fd_ 和 registered_fds_ 的访问是单线程串行的
+        RunInLoop([this, fd, events]() {
+            this->UpdateEvent(fd, events);
+        });
     }
 }
 
@@ -118,7 +129,7 @@ void EventLoop::Wakeup() {
     uint64_t one = 1;
     ssize_t n = write(wakeup_fd_, &one, sizeof(one));
     if (n != sizeof(one)) {
-        LOG_ERROR("EventLoop::Wakeup writes %lu bytes instead of 8", n);
+        LOG_ERROR("EventLoop::Wakeup writes %ld bytes instead of 8", n);
     }
 }
 
@@ -178,15 +189,11 @@ void EventLoop::ProcessEvents(int timeout_ms) {
 
 void EventLoop::HandleEvent(int fd, uint32_t events) {
     // 根据事件类型调用相应的回调
-    if (events & EPOLLIN) {
-        if (read_callback_) {
-            read_callback_(fd);
-        }
+    if ((events & EPOLLIN) && read_callbacks_.count(fd)) {
+        read_callbacks_[fd](fd);
     }
-    if (events & EPOLLOUT) {
-        if (write_callback_) {
-            write_callback_(fd);
-        }
+    if ((events & EPOLLOUT) && write_callbacks_.count(fd)) {
+        write_callbacks_[fd](fd);
     }
     // 注意：这里简化处理，实际应该处理EPOLLERR和EPOLLHUP
     if (events & (EPOLLERR | EPOLLHUP)) {

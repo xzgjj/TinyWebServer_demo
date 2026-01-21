@@ -24,7 +24,7 @@ int main()
 
     // 完全托管给 Server 类
     Server server("0.0.0.0", 8080);
-    std::cout << "[Server] TinyWebServer V3 (FSM Protocol) on port 8080" << std::endl;
+    std::cout << "[Server] TinyWebServer  (FSM Protocol) on port 8080" << std::endl;
     
     server.SetOnMessage([](std::shared_ptr<Connection> conn, const std::string& data) {
         LOG_INFO("Message received from FD: %d, data size: %zu", conn->GetFd(), data.size());
@@ -59,13 +59,10 @@ int main()
         }
     });
     
-    std::cout << "[Server] TinyWebServer V3 is running..." << std::endl;
+    std::cout << "[Server] TinyWebServer demo is running..." << std::endl;
     server.Start();
     
-    // 等待信号
-    while (g_running) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
+    server.Run();
     
     server.Stop();
     LOG_INFO("Server stopped gracefully.");

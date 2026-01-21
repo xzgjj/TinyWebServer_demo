@@ -148,6 +148,7 @@ set(INTEGRATION_TESTS
     test_main
     test_multithread_reactor
     test_basic
+    test_log
 )
 
 # B. 性能基准测试

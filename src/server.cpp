@@ -15,15 +15,37 @@
 #include <functional>
 
 // ... 原有代码保持不变 ...
+int CreateListenSocket(unsigned short port) {
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0) return -1;
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port); // 【解决 unused parameter】
+    addr.sin_addr.s_addr = INADDR_ANY;
+
+    // 设置 SO_REUSEADDR 方便调试
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(fd);
+        return -1;
+    }
+    if (listen(fd, 1024) < 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
 
 
 Server::Server(const std::string& ip, int port)
-    : main_loop_(new EventLoop()),
-      thread_pool_(new EventLoopThreadPool(main_loop_.get())),
-      listen_fd_(CreateListenFd(ip, port)) {
+    : main_loop_(std::make_unique<EventLoop>()),
+      thread_pool_(std::make_unique<EventLoopThreadPool>(main_loop_.get())),
+      listen_fd_(CreateListenSocket(static_cast<unsigned short>(port))) {
     
-    // 配置 Acceptor 的 Channel
-    // 注意：这里直接操作 main_loop，因为它只负责 accept
     main_loop_->SetAcceptCallback(std::bind(&Server::HandleAccept, this, listen_fd_));
     main_loop_->UpdateEvent(listen_fd_, EPOLLIN | EPOLLET);
     
@@ -35,13 +57,15 @@ Server::~Server() {
     close(listen_fd_);
 }
 
+
+
 void Server::Start() {
     // 1. 启动线程池 (SubLoops)
     thread_pool_->SetThreadNum(4); // 建议设置为 CPU 核心数
     thread_pool_->Start();
     
     // 2. 启动主循环 (MainLoop)
-    main_loop_->Loop();
+   
 }
 
 void Server::Stop() {
@@ -49,7 +73,9 @@ void Server::Stop() {
     thread_pool_->Stop(); // 需在 ThreadPool 中实现 Stop
 }
 
-
+void Server::Run() {
+    main_loop_->Loop(); 
+}
 
 void Server::HandleAccept(int listen_fd) {
     struct sockaddr_in client_addr;
@@ -105,20 +131,3 @@ void Server::RemoveConnection(int fd) {
     }
 }
 
-int Server::CreateListenFd(const std::string& ip, int port) {
-    // (保持原有的 socket/bind/listen 逻辑不变)
-    int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    // ... 省略 bind/listen 的常规代码 ...
-    // 务必设置 SO_REUSEADDR
-    int opt = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = inet_addr(ip.c_str());
-    
-    bind(fd, (struct sockaddr*)&addr, sizeof(addr));
-    listen(fd, 2048);
-    return fd;
-}
