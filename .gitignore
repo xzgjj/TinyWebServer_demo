@@ -1,9 +1,22 @@
 
 build/
-.vscode/
+bin/
 *.o
 *.a
+*.so
+
+# 可执行文件
 server
 test_*
+bench.log
+*.log
+
+# IDE & 编辑器
 .vscode/
+.idea/
+*.swp
+*.save
+
+# 其他
+.DS_Store
 EOF
