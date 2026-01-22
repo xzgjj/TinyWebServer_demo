@@ -17,7 +17,7 @@
 | test_single_connection | ✅ 通过 | N/A | [Log](./build/test_logs/test_single_connection.log) |
 | test_multi_connection | ✅ 通过 | N/A | [Log](./build/test_logs/test_multi_connection.log) |
 | test_log | ✅ 通过 | RESULT: 58575.71 logs/sec | Total Time: 0.6829s | [Log](./build/test_logs/test_log.log) |
-| test_main | ❌ 失败(1) | `<span style='color:red'>[RESULT] Integration Test: FAILED</span>` | [Log](./build/test_logs/test_main.log) |
+| test_main | ✅ 通过 | N/A | [Log](./build/test_logs/test_main.log) |
 
 
 ---
