@@ -1,140 +1,249 @@
 
 
-# TinyWebServer_demo
+# TinyWebServer v5 – Multi-Reactor 高性能 C++ Web Server
 
+> **定位说明**：
+> 本项目是一个以 **Reactor 模式（epoll）** 为核心、面向工程实践与面试深度的 C++ 高性能 Web Server 示例实现。当前版本（v5）重点在 **多 Reactor 架构、事件驱动模型、连接生命周期管理与工程化代码结构**，并为后续 v6「真正工程级 Reactor」演进预留设计空间。
 
-## 概述
+---
 
-TinyWebServer_v1 是一个基于 C++ 的轻量级高性能 Web 服务器，支持：
-- 多连接并发处理
-- 基于 Epoll 的事件驱动
-- 非阻塞 I/O
-- 简单的客户端生命周期管理
-- 单元测试验证关键功能
+## 一、项目目标与边界
 
-## Features
+### 1. 项目目标
 
-- Single-thread epoll reactor
-- Non-blocking socket read/write
-- Output buffer + EPOLLOUT back-pressure
-- RAII + C++17
-- Safe connection lifecycle
+* 构建一个**结构清晰、职责明确**的 Reactor 架构示例
+* 帮助学习者从**工程视角**理解 epoll 驱动的事件循环
+* 覆盖 **网络 IO、并发模型、状态机、资源管理** 等核心问题
+* 具备**面试级可讲述深度**（Why / How / Trade-off）
 
-## 服务器
+### 2. 非目标（刻意不做）
 
-                 ┌────────────┐
-accept() ───────▶│ Connection │
-                 └─────┬──────┘
-                       │
-                       ▼
-               ┌─────────────────┐
-               │ EpollReactor     │
-               │  (IO only)       │
-               └─────┬───────────┘
-                     │ event
-        ┌────────────┴────────────┐
-        ▼                         ▼
-┌──────────────┐        ┌────────────────┐
-│ Read Handler │        │ Write Handler  │
-│ (parse)      │        │ (flush buffer) │
-└──────┬───────┘        └────────┬───────┘
-       │                          │
-       ▼                          ▼
-┌────────────────────────────────────────┐
-│            HTTP Layer                  │
-│  Request Parse / Response Generate     │
-└────────────────────────────────────────┘
+现阶段demo版本
+* ❌ 不追求极限性能 Benchmark
+* ❌ 不实现完整 HTTP/1.1 RFC
+* ❌ 不实现完整生产级日志 / TLS / HTTP2
 
+> 本项目是**工程能力放大器**，不是“功能堆砌型 Demo”。
 
-## 架构与步骤
+---
 
-框架演进路线 /
-v2   线程池 /
-v3： 实现http /
-v4   定时 和 异步日志 /
-v5   mmp零拷贝  静态态资源系统和 / 火焰图
-v6   线程池优化 参考项目  /
+## 二、整体架构概览（v5）
 
-性能 /
-QPS   平均延迟   并发支持 内存分配
+```
+        +------------------+
+        |    Acceptor      |
+        |  (Main Reactor)  |
+        +--------+---------+
+                 |
+          新连接分发
+                 v
+        +------------------+     +------------------+
+        | Sub Reactor #1   | ... | Sub Reactor #N   |
+        | epoll + loop     |     | epoll + loop     |
+        +--------+---------+     +--------+---------+
+                 |                        |
+            Connection                Connection
+```
 
+### 架构角色说明
 
-##  实现
+| 组件         | 职责                    |
+| ---------- | --------------------- |
+| Acceptor   | 监听端口、accept 新连接、分发 fd |
+| EventLoop  | 封装 epoll_wait + 回调派发  |
+| Channel    | fd 与事件的抽象（事件 → 回调）    |
+| Connection | 一个 TCP 连接的生命周期与状态机    |
+| ThreadPool | Sub Reactor 线程管理      |
 
-实现对应：
+> **核心思想**：
+>
+> * epoll 只做一件事：**告诉你“哪个 fd 发生了什么”**
+> * Reactor 做一件事：**事件 → 回调 → 状态推进**
 
-EpollReactor 类实现了 Epoll 事件驱动机制。
+---
 
-Connection 类封装了单个 TCP 连接的生命周期（状态管理、读写缓冲）。
+## 三、Reactor 模式的工程级理解
 
-main.cpp 使用 EpollReactor 注册监听 socket，接收客户端请求并调度事件。
+### 1. 从 epoll 到 Reactor 的抽象跃迁
 
-2. 功能实现说明
-2.1 多连接支持
-支持同时处理多个客户端连接。
+#### epoll 的本质
 
+* 内核维护一个 **就绪事件队列**
+* 用户态通过 `epoll_wait` 获取事件集合
 
-实现对应：
+#### Reactor 的价值
 
-EpollReactor 内维护了 epoll_fd_ 和 std::unordered_map<int, Connection>。
+* 把：
 
-当 epoll_wait 返回事件时，根据 fd 调用对应 Connection 的 HandleRead / HandleWrite。
+  * fd
+  * 感兴趣的事件
+  * 事件触发后的处理逻辑
 
-2.2 非阻塞 I/O
-所有客户端 socket 均为非阻塞模式，保证单线程事件循环不会被阻塞。
+  封装为 **Channel**
 
+```
+fd + events + callback  => Channel
+```
 
+> **Reactor = 事件分发器，而不是业务执行者**
 
+---
 
+### 2. Connection 是“状态机”，不是 socket 封装
 
-实现对应：
+一个成熟的 Reactor 项目，**真正的复杂度在 Connection**。
 
-CreateListenSocket() 返回非阻塞的监听 socket。
-Connection::Fd() 对应的 socket 也设置了 O_NONBLOCK。
-TryFlushWriteBuffer() 实现非阻塞写，遇到 EAGAIN 返回等待下一轮事件。
+#### Connection 的核心状态
 
-2.3 客户端生命周期管理
-每个客户端连接有状态：  - OPEN: 连接可读写  - CLOSED: 连接关闭
+* Connecting
+* Connected
+* Reading
+* Writing
+* Closing
+* Closed
 
+#### 状态推进由什么驱动？
 
-实现对应：
-enum class ConnState { OPEN, CLOSED };
-Connection::State() 返回当前状态
-Connection::Close() 关闭 fd 并更新状态
-EpollReactor::Run() 根据状态决定是否处理读写事件
+* epoll 事件（EPOLLIN / EPOLLOUT / ERR / HUP）
+* 业务处理结果（是否还有待发送数据）
 
-2.4 事件驱动机制
-使用 Epoll 进行事件通知：
-- EPOLLIN -> 可读  - EPOLLOUT -> 可写   EPOLLERR / EPOLLHUP -> 异常处理
+> 面试关键点：
+>
+> * Reactor 不“读写数据”，它**驱动状态变化**
 
+---
 
-实现对应：
-EpollReactor::UpdateInterest(Connection&) 注册/修改 epoll 事件
-EpollReactor::Run() 循环调用 epoll_wait 并分发事件到对应 Connection
+### 3. 为什么要 Multi-Reactor
 
-2.5 并发处理
-单线程事件循环处理所有连接，可通过多线程扩展。
+#### 单 Reactor 的瓶颈
 
+* epoll_wait 是串行的
+* 回调执行时间不可控
 
-实现对应：
-目前 v1 是单线程，依赖 epoll 高效轮询。
-连接操作和缓冲区在 Connection 内部封装，避免全局共享数据竞争。
+#### Multi-Reactor 的拆解思路
 
-3. 架构与文件说明
-src/
-  main.cpp          // 服务器入口，初始化监听 socket 和 EpollReactor
-  epoll_reactor.cpp // EpollReactor 实现
-  connection.cpp    // Connection 类实现
-  socket_utils.cpp  // socket 工具函数，如创建监听 socket
-include/
-  connection.h      // Connection 类声明
-  epoll_reactor.h   // EpollReactor 类声明
-tools.py            // 测试脚本
+| 层级           | 关注点          |
+| ------------ | ------------ |
+| Main Reactor | 连接建立（accept） |
+| Sub Reactor  | IO 事件驱动      |
 
+#### 关键设计决策
 
+* **一个 fd 只属于一个 EventLoop**
+* 连接建立后不跨线程迁移 fd
 
+---
 
-## Build
+## 四、关键实现的版本情况（结合 v5 现状）
+
+### 1. 异步日志实现？
+
+* ⚠️ **部分具备接口结构，但非完整工程级实现**
+* 当前日志更接近：
+
+  * 简化版异步写
+  * 缺少：
+
+    * 明确的 back-pressure
+    * 有界队列
+    * flush 策略与丢弃策略
+
+> 结论：**不是严格意义上的工程级异步日志**
+
+---
+
+### 2. mmap 零拷贝实现？
+
+* ✔ 使用了 mmap/sendfile 等零拷贝思想
+* ⚠ 但：
+
+  * 未建立完整生命周期封装
+  * 未限制单连接映射大小
+  * 未统一异常回收路径
+
+> 属于：**“机制正确，工程防护不足”**
+
+---
+
+### 3. 内存与资源管理
+
+#### 优点
+
+* RAII 思维较明确
+* fd / epoll 资源基本成对释放
+
+#### 风险点
+
+* 大响应未设置内存上限
+* 未引入 LRU / Cache 淘汰策略
+* 多线程下 Connection 生命周期需进一步收紧
+
+---
+
+## 五、问题清单
+
+### Reactor / epoll
+
+1. 为什么 epoll 适合高并发而不是高吞吐？
+2. LT 与 ET 在 Reactor 设计中的取舍？
+3. 一个 fd 能否同时被两个 epoll 监听？为什么？
+
+### Connection / 状态机
+
+4. Connection 为什么不能只用一个 read/write 回调？
+5. 半关闭（FIN）如何在 Reactor 中处理？
+6. 写事件什么时候应该关闭监听？
+
+### 并发与内核
+
+7. accept 是否应该在多线程中做？
+8. epoll_wait 是否会产生惊群？
+9. 为什么“一个 EventLoop 一个线程”是主流？
+
+---
+
+## 六、v6：Reactor 演进方向
+
+### 高优先级
+
+* 明确 Connection 状态机（enum + 状态转移表）
+* 有界异步日志队列（丢弃/阻塞策略）
+* 统一错误码与关闭路径
+
+### 中优先级
+
+* 读写缓冲区水位控制
+* mmap 文件缓存 + LRU 淘汰
+* TimerWheel / TimeHeap 管理超时连接
+
+### 低优先级
+
+* 更细粒度锁优化
+* 编译期优化与 inline 策略
+
+---
+
+## 七、测试、部署与工程化建议
+
+### 测试
+
+* Connection 状态机可单测
+* EventLoop 可 Mock epoll
+
+### 运维
+
+* 日志等级与输出路径外部化
+* 暴露连接数、活跃 fd、事件循环延迟指标
+
+### 技术债务提示
+
+* 当前版本更偏 **教学与能力展示**
+* 距离生产仍需：
+
+  * 更严格的边界控制
+  * 更系统的压测与故障演练
+
+### 调试与运行
 
 bash
 mkdir -p build
@@ -144,7 +253,6 @@ make
 
 make -j4
 
-## build
 
 python3 tools.py clean
 
@@ -159,7 +267,7 @@ cmake -DCMAKE_BUILD_TYPE=Debug \
 
 cmake --build . --parallel
 
-## debug
+
 cmake -DCMAKE_BUILD_TYPE=Debug ..
 在一个终端（左侧）启动服务器的 GDB 调试。 
 gdb ./server 
@@ -169,18 +277,7 @@ gdb ./server
 python3 tools.py clean
 第二步：全量编译并运行所有测试
 python3 tools.py all
-第三步：分析失败项 如果某个测试（例如 test_backpressure）失败，使用调试功能：
 python3 tools.py debug --target test_backpressure
-
-## 测试
-make
-完全自动化测试（推荐）
-
-终端 1 (启动服务器):  ./server
-终端 2 (运行测试脚本):
-
-根目录运行测试
-find . -type f -exec touch {} +
 
 python3 tools.py build
 python3 tools.py test
@@ -188,17 +285,24 @@ python3 tools.py test
 使用 GDB 调试特定测试
 python3 tools.py debug --target test_backpressure
 
-清理构建缓存
-python3 tools.py clean
-
-详细错误报告
-python3 tools.py all
-
-启动服务器：
-./build/server
+find . -type f -exec touch {} +
+终端 1 (启动服务器):  ./server
+终端 2 (运行测试脚本):
 
 sudo kill -9 $(sudo lsof -t -i:8080)
-# 强制杀死所有名为 server 的进程
-pkill -9 server
 
-/test_log_bench 8 200000
+
+
+---
+
+## 八、总结
+
+> **项目真正目的 epoll”**，
+> 而是：
+>
+> * 是否理解 IO 事件的生命周期
+> * 是否能把内核机制转化为工程抽象
+> * 是否知道“什么该做，什么不该现在做”
+
+如果你能把本 README 中的每一节都讲清楚，
+你已经站在 **高级 C++ / 网络工程师** 的门槛上。
