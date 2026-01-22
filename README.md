@@ -57,12 +57,12 @@
 
 > **核心思想**：
 >
-> * epoll 只做一件事：**告诉你“哪个 fd 发生了什么”**
+> * epoll 只做一件事：**告诉你“ fd 发生了什么”**
 > * Reactor 做一件事：**事件 → 回调 → 状态推进**
 
 ---
 
-## 三、Reactor 模式的工程级理解
+## 三、Reactor 模式的工程理解
 
 ### 1. 从 epoll 到 Reactor 的抽象跃迁
 
@@ -102,7 +102,7 @@ fd + events + callback  => Channel
 * Closing
 * Closed
 
-#### 状态推进由什么驱动？
+#### 状态推进驱动组成
 
 * epoll 事件（EPOLLIN / EPOLLOUT / ERR / HUP）
 * 业务处理结果（是否还有待发送数据）
@@ -113,7 +113,7 @@ fd + events + callback  => Channel
 
 ---
 
-### 3. 为什么要 Multi-Reactor
+### 3.  Multi-Reactor 的优势
 
 #### 单 Reactor 的瓶颈
 
@@ -136,7 +136,7 @@ fd + events + callback  => Channel
 
 ## 四、关键实现的版本情况（结合 v5 现状）
 
-### 1. 异步日志实现？
+### 1. 异步日志实现情况：
 
 * ⚠️ **部分具备接口结构，但非完整工程级实现**
 * 当前日志更接近：
@@ -152,7 +152,7 @@ fd + events + callback  => Channel
 
 ---
 
-### 2. mmap 零拷贝实现？
+### 2. mmap 零拷贝实现情况：
 
 * ✔ 使用了 mmap/sendfile 等零拷贝思想
 * ⚠ 但：
@@ -185,20 +185,92 @@ fd + events + callback  => Channel
 ### Reactor / epoll
 
 1. 为什么 epoll 适合高并发而不是高吞吐？
+高并发：指 大量连接同时存在，但每个连接可能很少活跃
+epoll 采用 事件驱动 + 内核监听，在空闲连接多、活跃连接少时 CPU 不会空转
+高吞吐：指 连接活跃且数据量大，这更多依赖 IO 带宽和应用处理能力，epoll 只是事件通知，吞吐不一定比 select/poll 高
+结论：epoll 擅长处理 大数量空闲/低活跃连接 → 高并发
+
+---
+
 2. LT 与 ET 在 Reactor 设计中的取舍？
+模式	特点	Reactor 中取舍
+LT（Level Triggered）	fd 可读/可写 → epoll_wait 持续返回	简单，代码容易写，不容易漏事件，但 重复触发，可能多余 CPU
+ET（Edge Triggered）	只在状态改变时通知	高效，减少 epoll_wait 调用 → CPU 利好，但要求 一次性读写直到 EAGAIN，否则可能漏事件
+
+工程取舍：
+多数 Reactor accept + read/write 使用 ET 提升性能
+对简单/低并发 fd 可以 LT，容错性高
+
+---
+
 3. 一个 fd 能否同时被两个 epoll 监听？为什么？
+可以，但不推荐内核允许多个 epoll 实例注册同一个 fd
+
+问题：
+事件通知不可控：同一事件可能通知两个 epoll，造成 重复触发或惊群
+复杂资源管理，难保证线程安全
+工程实践：一个 fd 对应一个 EventLoop/epoll，简化状态管理
+
+---
 
 ### Connection / 状态机
 
 4. Connection 为什么不能只用一个 read/write 回调？
-5. 半关闭（FIN）如何在 Reactor 中处理？
-6. 写事件什么时候应该关闭监听？
+一个 fd 的状态可能很复杂：读缓冲可能已满  写缓冲可能还有未发送数据
+单回调不能区分不同状态，可能：写事件被触发但写缓冲为空 → 冗余 CPU 读事件被触发但 Connection 已关闭 → 错误
+状态机设计：每个阶段（read_header/read_body/write_response）独立处理 → 更清晰可控
+
+---
+
+
+6. 半关闭（FIN）如何在 Reactor 中处理？
+内核 fd 收到 FIN → read 返回 0
+Reactor 处理方式：读端关闭：read 返回 0 → 标记 Connection 关闭读方向
+写端可能还没关闭：继续发送剩余响应
+状态机必须区分 半关闭 与 完全关闭，防止数据丢失
+
+---
+
+7. 写事件什么时候应该关闭监听？
+写事件的 fd 监听可以关闭的条件：
+
+写缓冲 全部发送完
+Connection 不再接受新的数据
+否则继续监听 防止缓冲区可写时未写完
+注意：过早关闭写监听 → 数据丢失
+
+---
 
 ### 并发与内核
 
 7. accept 是否应该在多线程中做？
+多线程 accept 存在惊群（thundering herd）问题
+工程实践：
+一个 EventLoop/线程 负责 accept → 分发到 Worker
+或者使用 SO_REUSEPORT + 多线程 accept
+简单、高性能方案：主线程 accept → 分发到 I/O 线程池
+
+
 8. epoll_wait 是否会产生惊群？
-9. 为什么“一个 EventLoop 一个线程”是主流？
+单 epoll_wait 不会
+多线程共享同一 epoll 实例时可能惊群
+多线程被唤醒，但只有一个线程能成功 accept/read
+解决方案：
+一个线程对应一个 epoll（主流 Reactor 模式）
+或使用 ET + eventfd + queue 分发事件
+
+---
+
+10. 为什么“一个 EventLoop 一个线程”是主流？
+原因：
+避免多线程共享 epoll → 惊群、锁竞争
+每个 EventLoop 独立管理 Connection → 状态机单线程安全
+简化调度逻辑 → 高可维护性、高性能
+
+扩展：
+多核机器：多个 EventLoop 线程 + 任务分发 → 高并发处理
+保证单线程 Reactor 逻辑简单、避免复杂锁
+
 
 ---
 
@@ -237,7 +309,7 @@ fd + events + callback  => Channel
 
 ### 技术债务提示
 
-* 当前版本更偏 **教学与能力展示**
+* 当前版本demo
 * 距离生产仍需：
 
   * 更严格的边界控制
@@ -297,12 +369,12 @@ sudo kill -9 $(sudo lsof -t -i:8080)
 
 ## 八、总结
 
-> **项目真正目的 epoll”**，
-> 而是：
->
-> * 是否理解 IO 事件的生命周期
-> * 是否能把内核机制转化为工程抽象
-> * 是否知道“什么该做，什么不该现在做”
+> **项目目的** 
 
-如果你能把本 README 中的每一节都讲清楚，
-你已经站在 **高级 C++ / 网络工程师** 的门槛上。
+>
+> * 理解 IO 事件的生命周期
+> * 能把内核机制转化为工程抽象
+> * 知道“什么该做，什么不该现在做”
+
+
+
