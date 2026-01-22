@@ -1,5 +1,5 @@
 
-# TinyWebServer v5 – Multi-Reactor 高性能 C++ Web Server
+# TinyWebServer demo – Multi-Reactor 高性能 C++ Web Server
 
 > **定位说明**：
 > 本项目是一个以 **Reactor 模式（epoll）** 为核心、面向工程实践与面试深度的 C++ 高性能 Web Server 示例实现。当前版本（v5）重点在 **多 Reactor 架构、事件驱动模型、连接生命周期管理与工程化代码结构**，并为后续 v6「工程级 Reactor」演进预留设计空间。
@@ -27,7 +27,7 @@
 
 ---
 
-## 二、整体架构概览（v5）
+## 二、整体架构概览
 
 ```
         +------------------+
@@ -374,6 +374,7 @@ sudo kill -9 $(sudo lsof -t -i:8080)
 >* 理解 IO 事件的生命周期
 >* 能把内核机制转化为工程抽象
 >* 知道“什么该做，什么不该现在做”
+
 
 
 
