@@ -1,57 +1,76 @@
 //
-#include "reactor/epoll_reactor.h"
 #include <iostream>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <unistd.h>
 #include <csignal>
-
-void signal_handler(int sig) {
-    // 假设你有办法让 reactor 停止，或者直接用全局变量
-    extern bool g_running; 
-    g_running = false;
-}
-
+#include <memory>
+#include <sys/stat.h>
+#include <unistd.h>
+#include "server.h"
+#include "http_response.h"
+#include "http_request.h"
+#include "connection.h"
+#include "Logger.h"
 
 int main() {
-
-    signal(SIGINT, signal_handler); // 捕获 Ctrl+C
-    signal(SIGTERM, signal_handler); // 捕获终止信号
-    // 1. 创建监听 socket
-    int listen_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-    if (listen_fd < 0) {
-        perror("socket failed");
-        return 1;
+    // 1. 确保环境收敛：创建资源目录
+    struct stat st;
+    if (stat("./www", &st) != 0) {
+        mkdir("./www", 0755);
+        // 创建默认首页以防 404 导致集成测试失败
+        system("echo '<h1>TinyWebServer V3</h1>' > ./www/index.html");
     }
 
-    // 2. 绑定端口
-    struct sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(8080); // 这里才是放 8080 的地方
+    Logger::GetInstance().Init("./tiny_server.log", LogLevel::LOG_LEVEL_DEBUG);
+    Server server("0.0.0.0", 8080);
 
-    // 设置地址复用，防止重启服务器时报 Address already in use
-    int opt = 1;
-    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    server.SetOnMessage([](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
+        auto parser = conn->GetHttpParser();
+        auto& buffer = conn->GetInputBuffer();
 
-    if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("bind failed");
-        return 1;
-    }
+        // 核心修复：循环处理，直到缓冲区数据不足以构成一个完整 Header
+        while (true) {
+            size_t header_end = buffer.find("\r\n\r\n");
+            if (header_end == std::string::npos) {
+                break; // 数据不足，跳出等待下次 Read
+            }
 
-    if (listen(listen_fd, SOMAXCONN) < 0) {
-        perror("listen failed");
-        return 1;
-    }
+            if (parser->Parse(buffer)) {
+                HttpResponse response;
+                // 确保 Init 逻辑能正确处理路径
+                response.Init("./www", parser->GetPath(), false); 
+                response.MakeResponse();
 
-    try {
-        // 3. 传入真正的 listen_fd (而不是 8080)
-        EpollReactor reactor(listen_fd); 
-        reactor.Run(); 
-    } catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
-        return 1;
-    }
+                // 异步发送：Reactor 会处理发送队列
+                conn->Send(response.GetHeaderString());
+                if (response.HasFileBody()) {
+                    conn->Send(response.GetFileBody()); 
+                } else {
+                    conn->Send(response.GetBodyString());
+                }
 
+                // --- 关键：精确消耗已解析的数据 ---
+                // 注意：这里假设 Parse 仅处理了 Header，Body 逻辑需视业务而定
+                // 在当前简单模型下，我们移除到 \r\n\r\n 之后
+                buffer.erase(0, header_end + 4); 
+                
+                int status_code = response.GetCode();
+                parser->Reset(); // 为下一次解析重置状态
+
+                // 如果出错，则优雅关闭写端
+                if (status_code >= 400) {
+                    conn->Shutdown();
+                    break;
+                }
+            } else {
+                // 解析协议错误，清除坏数据并断开
+                buffer.clear();
+                conn->Shutdown();
+                break;
+            }
+        }
+    });
+
+    LOG_INFO("Server starting on port 8080...");
+    server.Start();
+    server.Run();
     return 0;
 }

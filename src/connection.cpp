@@ -1,71 +1,179 @@
 //
 
-#include "connection.h"   // 头文件只包含类声明
-#include <unistd.h>       // for close, read, write
-#include <algorithm>      // for std::min
+#include "connection.h"
+#include "http_request.h" 
+#include "server_metrics.h"
+#include "reactor/event_loop.h"
+#include "Logger.h"
 
-// 构造函数
-Connection::Connection(int fd)
-    : fd_(fd), state_(ConnState::OPEN) {}
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/uio.h> // writev
 
-// 析构函数
+
+Connection::Connection(int fd, EventLoop* loop)
+    : loop_(loop), fd_(fd), state_(ConnState::kConnecting),
+      http_parser_(new HttpRequest()) {
+}
+
 Connection::~Connection() {
-    Close();
+    LOG_DEBUG("Connection dtor fd=%d", fd_);
+    ::close(fd_);
 }
 
-// 获取文件描述符
-int Connection::Fd() const noexcept {
-    return fd_;
-}
-
-// 获取连接状态
-ConnState Connection::State() const noexcept {
-    return state_;
-}
-
-
-
-// 处理读事件
-void Connection::HandleRead() {
-    char buf[1024];
-    ssize_t n = read(fd_, buf, sizeof(buf));
-    if (n > 0) {
-        // 1. 存入读缓冲区（用于后续协议解析）
-        read_buffer_.insert(read_buffer_.end(), buf, buf + n);
-        
-        // 2. 【核心修复】为了通过测试，将数据存入写缓冲区实现 Echo
-        write_buffer_.insert(write_buffer_.end(), buf, buf + n);
-        
-    } else if (n == 0) {
-        state_ = ConnState::CLOSED;
-    } 
-}
-
-// 处理写事件
-void Connection::HandleWrite() {
-    if (write_buffer_.empty()) return;
-
-    ssize_t n = write(fd_, write_buffer_.data(), write_buffer_.size());
-    if (n > 0) {
-        write_buffer_.erase(write_buffer_.begin(), write_buffer_.begin() + n);
+void Connection::ConnectEstablished() {
+    if (!loop_->IsInLoopThread()) {
+        LOG_FATAL("ConnectEstablished must be called in loop thread");
     }
+    
+    state_ = ConnState::kConnected;
+    std::weak_ptr<Connection> weak_self(shared_from_this());
+    
+    loop_->SetReadCallback(fd_, [weak_self](int fd){
+        if (auto self = weak_self.lock()) self->HandleRead(fd);
+    });
+    
+    loop_->SetWriteCallback(fd_, [weak_self](int fd){
+        if (auto self = weak_self.lock()) self->HandleWrite(fd);
+    });
 
-    if (write_buffer_.empty() && state_ == ConnState::CLOSING) {
-        Close();
+    loop_->UpdateEvent(fd_, EPOLLIN | EPOLLET);
+}
+
+void Connection::Send(const char* data, size_t len) {
+    Send(std::string(data, len));
+}
+
+void Connection::Send(const std::string& data) {
+    if (state_ != ConnState::kConnected) return;
+
+    if (loop_->IsInLoopThread()) {
+        SendInLoop(data);
+    } else {
+        loop_->RunInLoop([self = shared_from_this(), data]() { 
+            self->SendInLoop(data); 
+        });
     }
 }
 
-// 尝试刷新写缓冲区（可选接口）
-bool Connection::TryFlushWriteBuffer() {
-    if (write_buffer_.empty()) return true;
-    HandleWrite();
-    return write_buffer_.empty();
+void Connection::Send(std::shared_ptr<StaticResource> resource) {
+    if (state_ != ConnState::kConnected || !resource) return;
+
+    if (loop_->IsInLoopThread()) {
+        SendResourceInLoop(resource);
+    } else {
+        loop_->RunInLoop([self = shared_from_this(), resource]() { 
+            self->SendResourceInLoop(resource); 
+        });
+    }
 }
 
-// 关闭连接
-void Connection::Close() {
-    if (state_ != ConnState::CLOSED) {
-        ::close(fd_);
-        state_ = ConnState::CLOSED;
+void Connection::SendInLoop(const std::string& data) {
+    if (data.empty()) return;
+    output_buffer_.Append(data);
+    // 尝试直接触发一次写操作，尽快将数据发出去
+    // 只有当之前没有注册 EPOLLOUT 时才尝试直接写，避免乱序
+    // 这里简化逻辑：直接调用 HandleWrite，它会处理好 writev 和事件注册
+    HandleWrite(fd_); 
+}
+
+void Connection::SendResourceInLoop(std::shared_ptr<StaticResource> res) {
+    if (!res || res->size == 0) return;
+    output_buffer_.Append(res);
+    HandleWrite(fd_);
+}
+
+void Connection::HandleRead(int fd) {
+    char buf[4096];
+    while (true) {
+        ssize_t n = ::read(fd, buf, sizeof(buf));
+        if (n > 0) {
+            input_buffer_.append(buf, n);
+        } else if (n == 0) {
+            HandleClose(fd);
+            break;
+        } else {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break;
+            }
+            LOG_ERROR("HandleRead error on fd=%d, err=%d", fd, errno);
+            HandleError(fd);
+            break;
+        }
     }
+    if (!input_buffer_.empty() && message_callback_) {
+        message_callback_(shared_from_this(), input_buffer_);
+    }
+}
+
+// 【核心重构】支持聚集写和断点续传
+void Connection::HandleWrite(int fd)
+{
+    if (state_ == ConnState::kDisconnected) return;
+
+    struct iovec iov[16]; 
+    // 修改处：output_buffer_chain_ -> output_buffer_
+    int count = output_buffer_.GetIov(iov, 16);
+    
+    if (count > 0)
+    {
+        ssize_t n = ::writev(fd, iov, count);
+        if (n > 0)
+        {
+            // 修改处：output_buffer_chain_ -> output_buffer_
+            output_buffer_.Advance(static_cast<size_t>(n));
+            ServerMetrics::GetInstance().OnBytesSent(static_cast<size_t>(n));
+
+            if (output_buffer_.IsEmpty())
+            {
+                loop_->UpdateEvent(fd_, EPOLLIN | EPOLLET);
+                if (state_ == ConnState::kDisconnecting) ShutdownInLoop();
+            }
+            else
+            {
+                loop_->UpdateEvent(fd_, EPOLLIN | EPOLLOUT | EPOLLET);
+            }
+        }
+        // ... 后续逻辑 ...
+        else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        {
+            loop_->UpdateEvent(fd_, EPOLLIN | EPOLLOUT | EPOLLET);
+        }
+        else
+        {
+            LOG_ERROR("HandleWrite fatal error on fd %d", fd);
+            HandleError(fd);
+        }
+    }
+}
+
+void Connection::Shutdown() {
+    if (state_ == ConnState::kConnected) {
+        state_ = ConnState::kDisconnecting;
+        loop_->RunInLoop(std::bind(&Connection::ShutdownInLoop, this));
+    }
+}
+
+void Connection::ShutdownInLoop() {
+    if (!loop_->IsInLoopThread()) return;
+    
+    // 只有当缓冲区为空时才真正关闭写端
+    if (output_buffer_.IsEmpty()) {
+        ::shutdown(fd_, SHUT_WR);
+    } else {
+        // 还有数据没发完，HandleWrite 发完后会再次调用 ShutdownInLoop
+        LOG_INFO("Shutdown pending, waiting buffer drain... fd=%d", fd_);
+    }
+}
+
+void Connection::HandleClose(int fd) {
+    state_ = ConnState::kDisconnected;
+    loop_->RemoveEvent(fd);
+    if (close_callback_) {
+        close_callback_(fd);
+    }
+}
+
+void Connection::HandleError(int fd) {
+    HandleClose(fd);
 }
