@@ -360,7 +360,7 @@ Connection 不再接受新的数据
 ### 调试与运行
 
 
-```
+
 bash
 mkdir -p build
 cd build
@@ -407,7 +407,7 @@ find . -type f -exec touch {} +
 
 sudo kill -9 $(sudo lsof -t -i:8080)
 
-```
+
 
 ---
 
@@ -418,6 +418,7 @@ sudo kill -9 $(sudo lsof -t -i:8080)
 >* 理解 IO 事件的生命周期
 >* 能把内核机制转化为工程抽象
 >* 知道“什么该做，什么不该现在做”
+
 
 
 
