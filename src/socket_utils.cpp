@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -25,9 +26,9 @@ void SetNonBlocking(int fd)
     }
 }
 
-int CreateListenSocket(std::uint16_t port)
+int CreateListenSocket(unsigned short port, int backlog, bool tcp_nodelay, bool tcp_cork)
 {
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (fd < 0)
     {
         throw std::runtime_error("socket failed");
@@ -35,6 +36,18 @@ int CreateListenSocket(std::uint16_t port)
 
     int opt = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    // 设置 TCP_NODELAY（禁用 Nagle 算法）
+    if (tcp_nodelay) {
+        opt = 1;
+        ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+    }
+
+    // 设置 TCP_CORK（聚合小包）
+    if (tcp_cork) {
+        opt = 1;
+        ::setsockopt(fd, IPPROTO_TCP, TCP_CORK, &opt, sizeof(opt));
+    }
 
     sockaddr_in addr {};
     addr.sin_family = AF_INET;
@@ -47,12 +60,11 @@ int CreateListenSocket(std::uint16_t port)
         throw std::runtime_error("bind failed");
     }
 
-    if (::listen(fd, SOMAXCONN) < 0)
+    if (::listen(fd, backlog) < 0)
     {
         ::close(fd);
         throw std::runtime_error("listen failed");
     }
 
-    SetNonBlocking(fd);
     return fd;
 }

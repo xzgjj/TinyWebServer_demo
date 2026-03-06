@@ -9,11 +9,18 @@
 #include <unordered_map>
 #include "reactor/event_loop.h"
 #include "reactor/event_loop_thread_pool.h"
+#include "reactor/socket_utils.h"
 #include "connection.h"
+#include "config/server_config.h"
+
+namespace tinywebserver {
+class ServerConfig;
+}
 
 class Server {
 public:
     Server(const std::string& ip, int port);
+    explicit Server(const std::shared_ptr<tinywebserver::ServerConfig>& config);
     ~Server();
     void Start();
     void Stop();
@@ -40,8 +47,8 @@ private:
 
     std::mutex conn_mutex_;
     std::unordered_map<int, std::shared_ptr<Connection>> connections_;
+    std::shared_ptr<tinywebserver::ServerConfig> config_;
 };
 
-int CreateListenSocket(unsigned short port);
 
 #endif

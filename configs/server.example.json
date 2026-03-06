@@ -1,0 +1,36 @@
+{
+  "server": {
+    "ip": "0.0.0.0",
+    "port": 8080,
+    "threads": 4,
+    "backlog": 1024,
+    "tcp_nodelay": true,
+    "tcp_cork": false
+  },
+  "limits": {
+    "max_connections": 10000,
+    "max_request_size": 65536,
+    "max_response_size": 1048576,
+    "connection_timeout": 30,
+    "keep_alive_timeout": 15,
+    "max_input_buffer": 65536,
+    "max_output_buffer": 1048576
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "logs/server.log",
+    "async": true,
+    "queue_size": 10000,
+    "flush_interval": 3
+  },
+  "static": {
+    "root": "./www",
+    "cache_size": 100,
+    "cache_ttl": 300
+  },
+  "metrics": {
+    "enable_prometheus": true,
+    "prometheus_port": 9090,
+    "collect_interval": 5
+  }
+}

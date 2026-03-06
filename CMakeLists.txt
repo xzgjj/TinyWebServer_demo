@@ -3,6 +3,11 @@ cmake_minimum_required(VERSION 3.16)
 project(TinyWebServer VERSION 3.0 LANGUAGES CXX)
 include(CTest)
 
+# 设置 FetchContent 策略
+if(POLICY CMP0077)
+    cmake_policy(SET CMP0077 NEW)
+endif()
+
 # --- 1. 编译选项与开关 ---
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -53,14 +58,26 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR})
 find_package(Threads REQUIRED)
 
 # JSON 库依赖 (nlohmann/json)
-include(FetchContent)
-FetchContent_Declare(
-  nlohmann_json
-  GIT_REPOSITORY https://github.com/nlohmann/json.git
-  GIT_TAG v3.11.2
-  GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(nlohmann_json)
+# 优先级：1) find_package 2) 本地 third_party/json.hpp
+find_package(nlohmann_json 3.11.2 QUIET)
+if(nlohmann_json_FOUND)
+    message(STATUS "nlohmann/json found via find_package")
+elseif(EXISTS ${PROJECT_SOURCE_DIR}/third_party/json.hpp)
+    message(STATUS "Using local nlohmann/json from third_party/json.hpp")
+    # 创建接口库以提供包含路径
+    add_library(nlohmann_json_local INTERFACE)
+    target_include_directories(nlohmann_json_local INTERFACE ${PROJECT_SOURCE_DIR}/third_party)
+    # 创建别名以匹配 find_package 的目标名
+    add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json_local)
+else()
+    message(WARNING "nlohmann/json not found and local third_party/json.hpp not available")
+    message(WARNING "Please download json.hpp from: https://github.com/nlohmann/json/releases/download/v3.11.2/json.hpp")
+    message(WARNING "And place it at: third_party/json.hpp")
+    # 创建空接口库以避免构建失败
+    add_library(nlohmann_json_fallback INTERFACE)
+    # 创建别名以匹配 find_package 的目标名
+    add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json_fallback)
+endif()
 
 # ✅ 修复4：完整包含路径
 add_library(project_configs INTERFACE)
@@ -70,6 +87,9 @@ target_include_directories(project_configs INTERFACE
     ${PROJECT_SOURCE_DIR}/include/common
     ${PROJECT_SOURCE_DIR}/include/error
     ${PROJECT_SOURCE_DIR}/include/timer
+    ${PROJECT_SOURCE_DIR}/include/config
+    ${PROJECT_SOURCE_DIR}/include/logging
+    ${PROJECT_SOURCE_DIR}/third_party
     ${PROJECT_SOURCE_DIR}/test
 )
 
@@ -92,6 +112,9 @@ set(CORE_SOURCES_LIST
     src/http_response.cpp
     src/Logger.cpp
     src/async_Logger.cpp
+    src/config/server_config.cpp
+    src/server_metrics.cpp
+    src/logging/structured_logger.cpp
     reactor/event_loop.cpp
     reactor/event_loop_thread.cpp
     reactor/event_loop_thread_pool.cpp

@@ -1,18 +1,21 @@
 //
 
 #include "connection.h"
-#include "http_request.h" 
+#include "http_request.h"
 #include "server_metrics.h"
 #include "reactor/event_loop.h"
 #include "Logger.h"
+
+using namespace tinywebserver;
 
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/uio.h> // writev
 
 
-Connection::Connection(int fd, EventLoop* loop)
+Connection::Connection(int fd, EventLoop* loop, std::shared_ptr<tinywebserver::ServerConfig> config)
     : loop_(loop), fd_(fd), state_(ConnState::kConnecting),
+      config_(config),
       read_timeout_seconds_(0),
       write_timeout_seconds_(0),
       idle_timeout_seconds_(0),
@@ -21,6 +24,14 @@ Connection::Connection(int fd, EventLoop* loop)
       idle_timeout_active_(false),
       last_activity_time_(std::chrono::steady_clock::now()),
       http_parser_(new HttpRequest()) {
+
+    // 从配置设置超时和限制
+    if (config_) {
+        auto limits = config_->GetLimitsOptions();
+        read_timeout_seconds_ = limits.connection_timeout;
+        write_timeout_seconds_ = limits.connection_timeout; // 使用相同超时，或可配置
+        idle_timeout_seconds_ = limits.keep_alive_timeout;
+    }
 }
 
 Connection::~Connection() {
@@ -79,10 +90,15 @@ void Connection::SendInLoop(const std::string& data) {
     if (data.empty()) return;
     // 输出缓冲区边界检查（包含待添加数据）
     size_t new_size = output_buffer_.TotalBytes() + data.size();
-    if (ConnectionLimits::IsOutputBufferExceeded(new_size)) {
+    size_t max_limit = ConnectionLimits::kMaxOutputBuffer;
+    if (config_) {
+        auto limits = config_->GetLimitsOptions();
+        max_limit = limits.max_output_buffer;
+    }
+    if (new_size > max_limit) {
         LOG_ERROR("Output buffer limit exceeded (current=%zu + new=%zu > limit=%zu), closing connection fd=%d",
                   output_buffer_.TotalBytes(), data.size(),
-                  ConnectionLimits::kMaxOutputBuffer, fd_);
+                  max_limit, fd_);
         HandleClose(fd_, tinywebserver::Error(tinywebserver::WebError::kTimeout, "connection timeout"));
         return;
     }
@@ -97,10 +113,15 @@ void Connection::SendResourceInLoop(std::shared_ptr<StaticResource> res) {
     if (!res || res->size == 0) return;
     // 输出缓冲区边界检查（包含待添加资源大小）
     size_t new_size = output_buffer_.TotalBytes() + res->size;
-    if (ConnectionLimits::IsOutputBufferExceeded(new_size)) {
+    size_t max_limit = ConnectionLimits::kMaxOutputBuffer;
+    if (config_) {
+        auto limits = config_->GetLimitsOptions();
+        max_limit = limits.max_output_buffer;
+    }
+    if (new_size > max_limit) {
         LOG_ERROR("Output buffer limit exceeded (current=%zu + resource=%zu > limit=%zu), closing connection fd=%d",
                   output_buffer_.TotalBytes(), res->size,
-                  ConnectionLimits::kMaxOutputBuffer, fd_);
+                  max_limit, fd_);
         HandleClose(fd_, tinywebserver::Error(tinywebserver::WebError::kTimeout, "connection timeout"));
         return;
     }
@@ -276,20 +297,30 @@ void Connection::Transition(ConnState new_state, const std::string& reason) {
 // 资源限制检查实现
 bool Connection::CheckInputBufferLimit() const {
     size_t current_size = input_buffer_.size();
-    bool exceeded = ConnectionLimits::IsInputBufferExceeded(current_size);
+    size_t max_limit = ConnectionLimits::kMaxInputBuffer; // 默认值
+    if (config_) {
+        auto limits = config_->GetLimitsOptions();
+        max_limit = limits.max_input_buffer;
+    }
+    bool exceeded = current_size > max_limit;
     if (exceeded) {
-        LOG_WARN("Input buffer limit exceeded: %zu > %zu, fd=%d", 
-                 current_size, ConnectionLimits::kMaxInputBuffer, fd_);
+        LOG_WARN("Input buffer limit exceeded: %zu > %zu, fd=%d",
+                 current_size, max_limit, fd_);
     }
     return exceeded;
 }
 
 bool Connection::CheckOutputBufferLimit() const {
     size_t current_size = output_buffer_.TotalBytes();
-    bool exceeded = ConnectionLimits::IsOutputBufferExceeded(current_size);
+    size_t max_limit = ConnectionLimits::kMaxOutputBuffer; // 默认值
+    if (config_) {
+        auto limits = config_->GetLimitsOptions();
+        max_limit = limits.max_output_buffer;
+    }
+    bool exceeded = current_size > max_limit;
     if (exceeded) {
         LOG_WARN("Output buffer limit exceeded: %zu > %zu, fd=%d",
-                 current_size, ConnectionLimits::kMaxOutputBuffer, fd_);
+                 current_size, max_limit, fd_);
     }
     return exceeded;
 }

@@ -5,6 +5,7 @@
 #include "server.h"
 #include "connection.h"
 #include "Logger.h"
+#include "config/server_config.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -15,7 +16,7 @@
 #include <functional>
 
 // ... 原有代码保持不变 ...
-int CreateListenSocket(unsigned short port) {
+int CreateListenSocket(unsigned short port, int backlog) {
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (fd < 0) return -1;
 
@@ -33,7 +34,7 @@ int CreateListenSocket(unsigned short port) {
         close(fd);
         return -1;
     }
-    if (listen(fd, 1024) < 0) {
+    if (listen(fd, backlog) < 0) {
         close(fd);
         return -1;
     }
@@ -44,12 +45,42 @@ int CreateListenSocket(unsigned short port) {
 Server::Server(const std::string& ip, int port)
     : main_loop_(std::make_unique<EventLoop>()),
       thread_pool_(std::make_unique<EventLoopThreadPool>(main_loop_.get())),
-      listen_fd_(CreateListenSocket(static_cast<unsigned short>(port))) {
-    
+      listen_fd_(CreateListenSocket(static_cast<unsigned short>(port), 1024)),
+      config_(nullptr) {
+
+    // 默认线程数
+    thread_pool_->SetThreadNum(4);
+
     main_loop_->SetAcceptCallback(std::bind(&Server::HandleAccept, this, listen_fd_));
     main_loop_->UpdateEvent(listen_fd_, EPOLLIN | EPOLLET);
-    
+
     LOG_INFO("Server started on %s:%d", ip.c_str(), port);
+}
+
+Server::Server(const std::shared_ptr<tinywebserver::ServerConfig>& config)
+    : config_(config) {
+
+    if (!config) {
+        LOG_ERROR("Invalid configuration provided");
+        throw std::invalid_argument("ServerConfig cannot be null");
+    }
+
+    auto server_opts = config->GetServerOptions();
+    listen_fd_ = CreateListenSocket(static_cast<unsigned short>(server_opts.port), server_opts.backlog);
+    if (listen_fd_ < 0) {
+        LOG_ERROR("Failed to create listen socket on port %d", server_opts.port);
+        throw std::runtime_error("Failed to create listen socket");
+    }
+
+    main_loop_ = std::make_unique<EventLoop>();
+    thread_pool_ = std::make_unique<EventLoopThreadPool>(main_loop_.get());
+    // 设置线程池线程数从配置
+    thread_pool_->SetThreadNum(server_opts.threads);
+
+    main_loop_->SetAcceptCallback(std::bind(&Server::HandleAccept, this, listen_fd_));
+    main_loop_->UpdateEvent(listen_fd_, EPOLLIN | EPOLLET);
+
+    LOG_INFO("Server started on %s:%d (config)", server_opts.ip.c_str(), server_opts.port);
 }
 
 Server::~Server() {
@@ -61,11 +92,11 @@ Server::~Server() {
 
 void Server::Start() {
     // 1. 启动线程池 (SubLoops)
-    thread_pool_->SetThreadNum(4); // 建议设置为 CPU 核心数
+    // 线程数已在构造函数中设置，此处只需启动
     thread_pool_->Start();
-    
+
     // 2. 启动主循环 (MainLoop)
-   
+
 }
 
 void Server::Stop() {
@@ -101,7 +132,7 @@ void Server::HandleAccept(int listen_fd) {
         
         // 创建连接对象
         // 注意：连接归属于 io_loop，但目前我们在 MainLoop 线程中
-        auto conn = std::make_shared<Connection>(conn_fd, io_loop);
+        auto conn = std::make_shared<Connection>(conn_fd, io_loop, config_);
         conn->SetMessageCallback(on_message_);
         conn->SetCloseCallback(std::bind(&Server::RemoveConnection, this, std::placeholders::_1));
 
