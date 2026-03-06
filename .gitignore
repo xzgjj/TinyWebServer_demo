@@ -19,4 +19,9 @@ bench.log
 
 # 其他
 .DS_Store
-EOF
+
+# 项目本地配置和笔记（不推送到远程仓库）
+CLAUDE.md
+notes.txt
+implementation_plan.md
+.claude/

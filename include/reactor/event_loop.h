@@ -16,6 +16,8 @@
 #include <thread>
 #include <unordered_map>
 
+#include "timer/timer_wheel.h"
+
 /**
  * @brief 核心事件循环类 (One Loop Per Thread)
  */
@@ -47,6 +49,12 @@ public:
     void SetAcceptCallback(Functor cb) { accept_callback_ = std::move(cb); }
     void SetReadCallback(int fd, std::function<void(int)> cb) { read_callbacks_[fd] = std::move(cb); }
     void SetWriteCallback(int fd, std::function<void(int)> cb) { write_callbacks_[fd] = std::move(cb); }
+
+    // 定时器管理
+    tinywebserver::Error AddTimer(int fd, int timeout_seconds, std::function<void()> callback);
+    tinywebserver::Error RemoveTimer(int fd);
+    bool HasTimer(int fd) const;
+    void ProcessTimers();
 
     bool IsInLoopThread() const noexcept {
         return thread_id_ == std::this_thread::get_id();
@@ -83,6 +91,9 @@ private:
     
     // 记录已注册的文件描述符
     std::unordered_map<int, uint32_t> registered_fds_;
+
+    // 定时器管理
+    tinywebserver::TimerWheel timer_wheel_;
 };
 
 #endif

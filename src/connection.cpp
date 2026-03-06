@@ -13,6 +13,13 @@
 
 Connection::Connection(int fd, EventLoop* loop)
     : loop_(loop), fd_(fd), state_(ConnState::kConnecting),
+      read_timeout_seconds_(0),
+      write_timeout_seconds_(0),
+      idle_timeout_seconds_(0),
+      read_timeout_active_(false),
+      write_timeout_active_(false),
+      idle_timeout_active_(false),
+      last_activity_time_(std::chrono::steady_clock::now()),
       http_parser_(new HttpRequest()) {
 }
 
@@ -76,7 +83,7 @@ void Connection::SendInLoop(const std::string& data) {
         LOG_ERROR("Output buffer limit exceeded (current=%zu + new=%zu > limit=%zu), closing connection fd=%d",
                   output_buffer_.TotalBytes(), data.size(),
                   ConnectionLimits::kMaxOutputBuffer, fd_);
-        HandleClose(fd_);
+        HandleClose(fd_, tinywebserver::Error(tinywebserver::WebError::kTimeout, "connection timeout"));
         return;
     }
     output_buffer_.Append(data);
@@ -94,7 +101,7 @@ void Connection::SendResourceInLoop(std::shared_ptr<StaticResource> res) {
         LOG_ERROR("Output buffer limit exceeded (current=%zu + resource=%zu > limit=%zu), closing connection fd=%d",
                   output_buffer_.TotalBytes(), res->size,
                   ConnectionLimits::kMaxOutputBuffer, fd_);
-        HandleClose(fd_);
+        HandleClose(fd_, tinywebserver::Error(tinywebserver::WebError::kTimeout, "connection timeout"));
         return;
     }
     output_buffer_.Append(res);
@@ -107,8 +114,9 @@ void Connection::HandleRead(int fd) {
         ssize_t n = ::read(fd, buf, sizeof(buf));
         if (n > 0) {
             input_buffer_.append(buf, n);
+            UpdateActivityTimestamp();  // 更新活动时间戳
         } else if (n == 0) {
-            HandleClose(fd);
+            HandleClose(fd, tinywebserver::Error::Success());
             break;
         } else {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -145,6 +153,7 @@ void Connection::HandleWrite(int fd)
             // 修改处：output_buffer_chain_ -> output_buffer_
             output_buffer_.Advance(static_cast<size_t>(n));
             ServerMetrics::GetInstance().OnBytesSent(static_cast<size_t>(n));
+            UpdateActivityTimestamp();  // 更新活动时间戳
 
             if (output_buffer_.IsEmpty())
             {
@@ -188,7 +197,14 @@ void Connection::ShutdownInLoop() {
     }
 }
 
-void Connection::HandleClose(int fd) {
+void Connection::HandleClose(int fd, const tinywebserver::Error& reason) {
+    // 记录关闭原因（如果不是成功）
+    if (reason.IsFailure()) {
+        LOG_INFO("Connection fd=%d closed with error: %s", fd, reason.ToString().c_str());
+    } else {
+        LOG_DEBUG("Connection fd=%d closed normally", fd);
+    }
+
     Transition(ConnState::kClosed, "connection closed");
     loop_->RemoveEvent(fd);
     if (close_callback_) {
@@ -197,7 +213,8 @@ void Connection::HandleClose(int fd) {
 }
 
 void Connection::HandleError(int fd) {
-    HandleClose(fd);
+    // 使用通用内部错误
+    HandleClose(fd, tinywebserver::Error(tinywebserver::WebError::kInternalError, "socket error"));
 }
 // 状态转移实现
 bool Connection::CanTransition(ConnState new_state) const {
@@ -249,9 +266,11 @@ void Connection::Transition(ConnState new_state, const std::string& reason) {
         }
         return;
     }
-    LOG_DEBUG("State transition fd=%d: %d -> %d, reason: %s", 
+    LOG_DEBUG("State transition fd=%d: %d -> %d, reason: %s",
               fd_, static_cast<int>(current), static_cast<int>(new_state), reason.c_str());
     state_.store(new_state, std::memory_order_release);
+    // 状态变化时更新超时设置
+    CheckAndSetTimeouts();
 }
 
 // 资源限制检查实现
@@ -292,4 +311,245 @@ void Connection::ClearReadBuffer() {
     // 清空缓冲区后恢复读取（如果之前因背压暂停）
     ResumeReading();
     LOG_DEBUG("Read buffer cleared, fd=%d", fd_);
+}
+
+// ============================================================================
+// 超时管理实现
+// ============================================================================
+
+void Connection::SetReadTimeout(int seconds) {
+    if (seconds <= 0) {
+        read_timeout_seconds_ = 0;
+        CancelTimeout("read");
+    } else {
+        read_timeout_seconds_ = seconds;
+        CheckAndSetTimeouts();
+    }
+}
+
+void Connection::SetWriteTimeout(int seconds) {
+    if (seconds <= 0) {
+        write_timeout_seconds_ = 0;
+        CancelTimeout("write");
+    } else {
+        write_timeout_seconds_ = seconds;
+        CheckAndSetTimeouts();
+    }
+}
+
+void Connection::SetIdleTimeout(int seconds) {
+    if (seconds <= 0) {
+        idle_timeout_seconds_ = 0;
+        CancelTimeout("idle");
+    } else {
+        idle_timeout_seconds_ = seconds;
+        CheckAndSetTimeouts();
+    }
+}
+
+void Connection::ResetIdleTimeout() {
+    UpdateActivityTimestamp();
+    if (idle_timeout_seconds_ > 0) {
+        SetupTimeout(idle_timeout_seconds_, "idle");
+    }
+}
+
+void Connection::DisableAllTimeouts() {
+    read_timeout_seconds_ = 0;
+    write_timeout_seconds_ = 0;
+    idle_timeout_seconds_ = 0;
+    CancelTimeout("read");
+    CancelTimeout("write");
+    CancelTimeout("idle");
+}
+
+bool Connection::HasActiveTimeout() const {
+    return read_timeout_active_ || write_timeout_active_ || idle_timeout_active_;
+}
+
+void Connection::SetupTimeout(int seconds, const std::string& timeout_type) {
+    if (seconds <= 0) {
+        return;
+    }
+
+    if (!loop_->IsInLoopThread()) {
+        loop_->RunInLoop([self = shared_from_this(), seconds, timeout_type]() {
+            self->SetupTimeout(seconds, timeout_type);
+        });
+        return;
+    }
+
+    // 创建超时回调
+    auto callback = [self = shared_from_this(), timeout_type]() {
+        self->OnTimeout(timeout_type);
+    };
+
+    // 添加定时器
+    auto error = loop_->AddTimer(fd_, seconds, std::move(callback));
+    if (error.IsFailure()) {
+        LOG_ERROR("Failed to setup %s timeout for fd=%d: %s",
+                 timeout_type.c_str(), fd_, error.ToString().c_str());
+    } else {
+        // 更新活动状态
+        if (timeout_type == "read") {
+            read_timeout_active_ = true;
+        } else if (timeout_type == "write") {
+            write_timeout_active_ = true;
+        } else if (timeout_type == "idle") {
+            idle_timeout_active_ = true;
+        }
+        LOG_DEBUG("Set %s timeout for fd=%d: %d seconds",
+                 timeout_type.c_str(), fd_, seconds);
+    }
+}
+
+void Connection::CancelTimeout(const std::string& timeout_type) {
+    if (!loop_->IsInLoopThread()) {
+        loop_->RunInLoop([self = shared_from_this(), timeout_type]() {
+            self->CancelTimeout(timeout_type);
+        });
+        return;
+    }
+
+    // 移除定时器
+    auto error = loop_->RemoveTimer(fd_);
+    if (error.IsFailure() && error.GetCode() != tinywebserver::WebError::kSuccess) {
+        LOG_WARN("Failed to cancel %s timeout for fd=%d: %s",
+                timeout_type.c_str(), fd_, error.ToString().c_str());
+    } else {
+        // 更新活动状态
+        if (timeout_type == "read") {
+            read_timeout_active_ = false;
+        } else if (timeout_type == "write") {
+            write_timeout_active_ = false;
+        } else if (timeout_type == "idle") {
+            idle_timeout_active_ = false;
+        }
+        LOG_DEBUG("Cancelled %s timeout for fd=%d", timeout_type.c_str(), fd_);
+    }
+}
+
+void Connection::OnTimeout(const std::string& timeout_type) {
+    if (!loop_->IsInLoopThread()) {
+        loop_->RunInLoop([self = shared_from_this(), timeout_type]() {
+            self->OnTimeout(timeout_type);
+        });
+        return;
+    }
+
+    LOG_WARN("Connection timeout fd=%d: %s timeout", fd_, timeout_type.c_str());
+
+    // 更新活动状态
+    if (timeout_type == "read") {
+        read_timeout_active_ = false;
+    } else if (timeout_type == "write") {
+        write_timeout_active_ = false;
+    } else if (timeout_type == "idle") {
+        idle_timeout_active_ = false;
+    }
+
+    // 根据超时类型处理
+    if (timeout_type == "read") {
+        // 读超时：关闭连接
+        HandleClose(fd_, tinywebserver::Error(tinywebserver::WebError::kTimeout, "connection timeout"));
+    } else if (timeout_type == "write") {
+        // 写超时：关闭连接
+        HandleClose(fd_, tinywebserver::Error(tinywebserver::WebError::kTimeout, "connection timeout"));
+    } else if (timeout_type == "idle") {
+        // 空闲超时：关闭连接
+        HandleClose(fd_, tinywebserver::Error(tinywebserver::WebError::kTimeout, "connection timeout"));
+    }
+}
+
+void Connection::UpdateActivityTimestamp() {
+    last_activity_time_ = std::chrono::steady_clock::now();
+    // 重置空闲超时
+    if (idle_timeout_seconds_ > 0) {
+        SetupTimeout(idle_timeout_seconds_, "idle");
+    }
+}
+
+void Connection::CheckAndSetTimeouts() {
+    // 根据当前状态和配置设置超时
+    // 这是一个简化的实现，实际可能需要更精细的控制
+    ConnState current = state_.load(std::memory_order_acquire);
+
+    // 读超时：在Reading状态时生效
+    if (read_timeout_seconds_ > 0 && current == ConnState::kReading) {
+        SetupTimeout(read_timeout_seconds_, "read");
+    } else {
+        CancelTimeout("read");
+    }
+
+    // 写超时：在Writing状态时生效
+    if (write_timeout_seconds_ > 0 && current == ConnState::kWriting) {
+        SetupTimeout(write_timeout_seconds_, "write");
+    } else {
+        CancelTimeout("write");
+    }
+
+    // 空闲超时：在Connected状态时生效
+    if (idle_timeout_seconds_ > 0 && current == ConnState::kConnected) {
+        SetupTimeout(idle_timeout_seconds_, "idle");
+    } else {
+        CancelTimeout("idle");
+    }
+}
+
+// ============================================================================
+// 统一关闭路径实现
+// ============================================================================
+
+void Connection::Close(const tinywebserver::Error& reason) {
+    if (!IsConnected()) {
+        // 连接已经关闭，忽略
+        return;
+    }
+
+    LOG_INFO("Closing connection fd=%d: %s", fd_, reason.ToString().c_str());
+
+    if (loop_->IsInLoopThread()) {
+        CloseInLoop(reason);
+    } else {
+        loop_->RunInLoop([self = shared_from_this(), reason]() {
+            self->CloseInLoop(reason);
+        });
+    }
+}
+
+void Connection::CloseInLoop(const tinywebserver::Error& reason) {
+    if (!loop_->IsInLoopThread()) {
+        return;
+    }
+
+    ConnState current = state_.load(std::memory_order_acquire);
+    if (current == ConnState::kClosed || current == ConnState::kClosing) {
+        // 已经在关闭过程中，忽略重复关闭
+        LOG_DEBUG("Connection fd=%d already in closing state %d", fd_, static_cast<int>(current));
+        return;
+    }
+
+    // 记录关闭原因
+    LOG_INFO("Connection fd=%d closing with reason: %s", fd_, reason.ToString().c_str());
+
+    // 禁用所有超时
+    DisableAllTimeouts();
+
+    // 根据错误类型决定关闭策略
+    if (reason.GetSysErrno() != 0) {
+        // 系统错误：立即关闭
+        HandleClose(fd_, tinywebserver::Error(tinywebserver::WebError::kTimeout, "connection timeout"));
+    } else if (reason.GetCode() == tinywebserver::WebError::kTimeout) {
+        // 超时错误：立即关闭
+        HandleClose(fd_, tinywebserver::Error(tinywebserver::WebError::kTimeout, "connection timeout"));
+    } else if (reason.GetCode() == tinywebserver::WebError::kBufferFull ||
+               reason.GetCode() == tinywebserver::WebError::kMemoryLimit) {
+        // 资源限制错误：尝试优雅关闭
+        Transition(ConnState::kClosing, "resource limit reached");
+        ShutdownInLoop();
+    } else {
+        // 其他错误：优雅关闭
+        Transition(ConnState::kClosing, "error: " + reason.GetMessage());
+        ShutdownInLoop();
+    }
 }
