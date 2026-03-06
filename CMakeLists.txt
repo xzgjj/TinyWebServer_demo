@@ -52,6 +52,16 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR})
 # --- 2. 依赖与核心库 ---
 find_package(Threads REQUIRED)
 
+# JSON 库依赖 (nlohmann/json)
+include(FetchContent)
+FetchContent_Declare(
+  nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG v3.11.2
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # ✅ 修复4：完整包含路径
 add_library(project_configs INTERFACE)
 target_include_directories(project_configs INTERFACE
@@ -123,7 +133,7 @@ endif()
 # 创建核心静态库
 if(NOT "${VALID_CORE_SOURCES}" STREQUAL "")
     add_library(webserver_core STATIC ${VALID_CORE_SOURCES})
-    target_link_libraries(webserver_core PUBLIC Threads::Threads project_configs)
+    target_link_libraries(webserver_core PUBLIC Threads::Threads project_configs nlohmann_json::nlohmann_json)
     message(STATUS "✅ 核心库 webserver_core 配置完成")
 else()
     message(FATAL_ERROR "❌ 未找到任何有效的核心源文件")
@@ -186,7 +196,7 @@ if(BUILD_TESTING)
         set(TEST_FILE ${PROJECT_SOURCE_DIR}/test/${test_name}.cpp)
         if(EXISTS ${TEST_FILE})
             add_executable(${test_name} test/${test_name}.cpp)
-            target_link_libraries(${test_name} PRIVATE webserver_core project_configs)
+            target_link_libraries(${test_name} PRIVATE webserver_core project_configs nlohmann_json::nlohmann_json)
             add_test(NAME ${test_name} COMMAND ${test_name})
             set_tests_properties(${test_name} PROPERTIES TIMEOUT 30)
 
