@@ -1,4 +1,4 @@
-name: C++ CI & Memory Check
+name: C++ CI
 
 on:
   push:
@@ -7,49 +7,78 @@ on:
     branches: [ "main" ]
 
 env:
-  # 设置编译类型为 Debug，这是 Valgrind 输出准确调用栈的先决条件
   BUILD_TYPE: Debug
 
 jobs:
   build-and-test:
+    name: Build + ASan Smoke Tests
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Install Dependencies
-      # 安装必要的构建工具、测试框架（Google Test）和 Valgrind
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake g++ valgrind libgtest-dev libmysqlclient-dev
-        # 编译并安装 GTest (Ubuntu 下 libgtest-dev 仅提供源码)
-        cd /usr/src/gtest
-        sudo cmake CMakeLists.txt
-        sudo make
-        sudo cp lib/*.a /usr/lib
+        sudo apt-get install -y cmake g++ ninja-build
 
     - name: Configure CMake
-      # 使用 CMake 配置项目，开启 Debug 模式和测试开关
-      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DBUILD_TESTING=ON
+      run: >
+        cmake -S . -B build -G Ninja
+        -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+        -DBUILD_TESTING=ON
+        -DENABLE_ASAN=ON
 
     - name: Build
-      # 编译整个 Web Server 和单元测试目标
-      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}} --parallel 4
+      run: cmake --build build --parallel
 
-    - name: Run Unit Tests
-      working-directory: ${{github.workspace}}/build
-      # 执行基础单元测试（确保业务逻辑正确）
-      run: ctest -C ${{env.BUILD_TYPE}} --output-on-failure
+    - name: Run Smoke Tests
+      run: ctest --test-dir build --output-on-failure --timeout 60 -L smoke
 
-    - name: Run Valgrind Memory Check
-      working-directory: ${{github.workspace}}/build
-      # 使用 Valgrind 运行测试程序，检测内存泄漏和越界
-      # --error-exitcode=1 确保发现泄漏时阻断 CI 流水线 (Fail Fast)
+  memcheck:
+    name: Valgrind Memcheck
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies
       run: |
-        valgrind --tool=memcheck \
-                 --leak-check=full \
-                 --show-leak-kinds=all \
-                 --track-origins=yes \
-                 --error-exitcode=1 \
-                 ./test_tinywebserver # 替换为实际的测试可执行文件名
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ ninja-build valgrind
+
+    - name: Configure CMake (ASan OFF)
+      run: >
+        cmake -S . -B build -G Ninja
+        -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+        -DBUILD_TESTING=ON
+        -DENABLE_ASAN=OFF
+
+    - name: Build
+      run: cmake --build build --parallel
+
+    - name: Run Valgrind on Smoke Targets
+      run: |
+        set -euo pipefail
+        tests=(test_timer test_basic test_multithread_reactor test_log)
+        mkdir -p build/valgrind_logs
+        for t in "${tests[@]}"; do
+          echo ">>> Valgrind: ${t}"
+          valgrind --tool=memcheck \
+                   --leak-check=full \
+                   --show-leak-kinds=all \
+                   --track-origins=yes \
+                   --error-exitcode=1 \
+                   "./build/${t}" > "build/valgrind_logs/${t}.log" 2>&1
+          tail -n 20 "build/valgrind_logs/${t}.log"
+        done
+
+    - name: Upload Valgrind Logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: valgrind-logs
+        path: build/valgrind_logs

@@ -1,6 +1,7 @@
 
 cmake_minimum_required(VERSION 3.16)
 project(TinyWebServer VERSION 3.0 LANGUAGES CXX)
+include(CTest)
 
 # --- 1. 编译选项与开关 ---
 set(CMAKE_CXX_STANDARD 17)
@@ -134,49 +135,71 @@ else()
 endif()
 
 # --- 4. 自动化测试分类管理 ---
-message(STATUS "")
-message(STATUS "=========================================")
-message(STATUS "测试文件加载自检")
-message(STATUS "=========================================")
+set(ALL_TEST_TARGETS "")
+if(BUILD_TESTING)
+    message(STATUS "")
+    message(STATUS "=========================================")
+    message(STATUS "测试文件加载自检")
+    message(STATUS "=========================================")
 
-# A. 功能与集成测试
-set(INTEGRATION_TESTS
-    test_timer
-    test_lifecycle
-    test_single_connection
-    test_multi_connection
-    test_client_close
-    test_backpressure
-    test_stress
-    test_main
-    test_multithread_reactor
-    test_basic
-    test_log
-)
+    # A. 功能与集成测试
+    set(INTEGRATION_TESTS
+        test_timer
+        test_lifecycle
+        test_single_connection
+        test_multi_connection
+        test_client_close
+        test_backpressure
+        test_stress
+        test_main
+        test_multithread_reactor
+        test_basic
+        test_log
+    )
 
-# B. 性能基准测试
-set(BENCHMARK_TESTS
-    test_log_bench
-)
+    # 适合 CI 的快速冒烟集
+    set(CI_SMOKE_TESTS
+        test_timer
+        test_basic
+        test_multithread_reactor
+        test_log
+    )
 
-# 合并去重
-set(ALL_TEST_TARGETS ${INTEGRATION_TESTS})
-foreach(test ${BENCHMARK_TESTS})
-    list(APPEND ALL_TEST_TARGETS ${test})
-endforeach()
-list(REMOVE_DUPLICATES ALL_TEST_TARGETS)
+    # B. 性能基准测试
+    set(BENCHMARK_TESTS
+        test_log_bench
+    )
 
-# 批量生成测试目标
-foreach(test_name ${ALL_TEST_TARGETS})
-    set(TEST_FILE ${PROJECT_SOURCE_DIR}/test/${test_name}.cpp)
-    if(EXISTS ${TEST_FILE})
-        add_executable(${test_name} test/${test_name}.cpp)
-        target_link_libraries(${test_name} PRIVATE webserver_core project_configs)
-        message(STATUS "✓ 加载测试用例: ${test_name}")
-    else()
-        message(WARNING "⚠️ 跳过测试用例: ${test_name} (文件缺失)")
-    endif()
-endforeach()
+    # 合并去重
+    set(ALL_TEST_TARGETS ${INTEGRATION_TESTS})
+    foreach(test ${BENCHMARK_TESTS})
+        list(APPEND ALL_TEST_TARGETS ${test})
+    endforeach()
+    list(REMOVE_DUPLICATES ALL_TEST_TARGETS)
+
+    # 批量生成测试目标并注册到 ctest
+    foreach(test_name ${ALL_TEST_TARGETS})
+        set(TEST_FILE ${PROJECT_SOURCE_DIR}/test/${test_name}.cpp)
+        if(EXISTS ${TEST_FILE})
+            add_executable(${test_name} test/${test_name}.cpp)
+            target_link_libraries(${test_name} PRIVATE webserver_core project_configs)
+            add_test(NAME ${test_name} COMMAND ${test_name})
+            set_tests_properties(${test_name} PROPERTIES TIMEOUT 30)
+
+            if(test_name IN_LIST CI_SMOKE_TESTS)
+                set_tests_properties(${test_name} PROPERTIES LABELS "smoke;integration")
+            elseif(test_name IN_LIST BENCHMARK_TESTS)
+                set_tests_properties(${test_name} PROPERTIES LABELS "benchmark")
+            else()
+                set_tests_properties(${test_name} PROPERTIES LABELS "integration")
+            endif()
+
+            message(STATUS "✓ 加载测试用例: ${test_name}")
+        else()
+            message(WARNING "⚠️ 跳过测试用例: ${test_name} (文件缺失)")
+        endif()
+    endforeach()
+endif()
 
 # --- 最终提示 ---
 message(STATUS "")
@@ -185,5 +208,9 @@ message(STATUS "✅ 项目配置完成 [简洁优化版]")
 message(STATUS "编译环境: C++17 | ${CMAKE_BUILD_TYPE}")
 message(STATUS "✅ 所有可执行文件将生成在: ${CMAKE_BINARY_DIR}")
 message(STATUS "✅ 核心库: webserver_core")
-message(STATUS "✅ 测试用例总数: ${ALL_TEST_TARGETS}")
+if(BUILD_TESTING)
+    message(STATUS "✅ 测试用例总数: ${ALL_TEST_TARGETS}")
+else()
+    message(STATUS "✅ BUILD_TESTING=OFF，跳过测试目标")
+endif()
 message(STATUS "=========================================")
