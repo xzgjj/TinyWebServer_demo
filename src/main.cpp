@@ -2,6 +2,7 @@
 #include <iostream>
 #include <csignal>
 #include <memory>
+#include <string>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "server.h"
@@ -9,8 +10,25 @@
 #include "http_request.h"
 #include "connection.h"
 #include "Logger.h"
+#include "config/server_config.h"
+#include "logging/structured_logger.h"
 
-int main() {
+int main(int argc, char* argv[]) {
+    std::string config_file;
+    // 简单命令行参数解析
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--config" && i + 1 < argc) {
+            config_file = argv[++i];
+        } else if (arg == "--help") {
+            std::cout << "Usage: " << argv[0] << " [--config <path>] [--help]" << std::endl;
+            return 0;
+        } else {
+            std::cerr << "Unknown argument: " << arg << std::endl;
+            return 1;
+        }
+    }
+
     // 1. 确保环境收敛：创建资源目录
     struct stat st;
     if (stat("./www", &st) != 0) {
@@ -20,9 +38,25 @@ int main() {
     }
 
     Logger::GetInstance().Init("./tiny_server.log", LogLevel::LOG_LEVEL_DEBUG);
-    Server server("0.0.0.0", 8080);
 
-    server.SetOnMessage([](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
+    std::unique_ptr<Server> server;
+    if (!config_file.empty()) {
+        auto config = tinywebserver::ServerConfig::LoadFromFile(config_file);
+        if (!config) {
+            std::cerr << "Failed to load configuration from " << config_file << std::endl;
+            return 1;
+        }
+        server = std::make_unique<Server>(config);
+        LOG_INFO("Server configured from file: %s", config_file.c_str());
+
+        // 初始化结构化日志系统
+        tinywebserver::InitStructuredLoggerFromConfig(config);
+    } else {
+        // 默认配置
+        server = std::make_unique<Server>("0.0.0.0", 8080);
+    }
+
+    server->SetOnMessage([](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
         auto parser = conn->GetHttpParser();
         auto& buffer = conn->GetInputBuffer();
 
@@ -70,7 +104,7 @@ int main() {
     });
 
     LOG_INFO("Server starting on port 8080...");
-    server.Start();
-    server.Run();
+    server->Start();
+    server->Run();
     return 0;
 }

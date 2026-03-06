@@ -4,5 +4,5 @@
 
 #include <cstdint>
 
-int CreateListenSocket(std::uint16_t port);
+int CreateListenSocket(unsigned short port, int backlog = 1024);
 void SetNonBlocking(int fd);

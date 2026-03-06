@@ -14,6 +14,7 @@
 #include "static_resource_manager.h" // for StaticResource
 #include "connection_limits.h"
 #include "error/error.h"
+#include "config/server_config.h"
 
 
 class HttpRequest; 
@@ -35,7 +36,7 @@ public:
     using MessageCallback = std::function<void(std::shared_ptr<Connection>, const std::string&)>;
     using CloseCallback = std::function<void(int)>;
 
-    Connection(int fd, EventLoop* loop);
+    Connection(int fd, EventLoop* loop, std::shared_ptr<tinywebserver::ServerConfig> config = nullptr);
     ~Connection();
 
     // 初始化连接，必须在 loop 线程调用
@@ -122,6 +123,7 @@ private:
     
     // 【修改】写缓冲区：升级为支持 Scatter/Gather 的链式缓冲
     BufferChain output_buffer_;
+    std::shared_ptr<tinywebserver::ServerConfig> config_;
 
     // 【新增】超时管理
     int read_timeout_seconds_;
