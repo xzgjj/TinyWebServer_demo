@@ -10,15 +10,24 @@
 #include <atomic>
 
 #include "http_request.h"
-#include "buffer_chain.h" 
+#include "buffer_chain.h"
 #include "static_resource_manager.h" // for StaticResource
+#include "connection_limits.h"
 
 
 class HttpRequest; 
 class EventLoop;
 class StaticResource; // 确保 StaticResource 也能被识别
 
-enum class ConnState { kConnecting, kConnected, kDisconnecting, kDisconnected };
+enum class ConnState {
+    kConnecting,      ///< 连接建立中 (SYN_SENT)
+    kConnected,       ///< 连接已建立，等待请求
+    kReading,         ///< 读取请求中
+    kProcessing,      ///< 业务处理中 (生成响应)
+    kWriting,         ///< 发送响应中
+    kClosing,         ///< 正在关闭 (半关闭)
+    kClosed           ///< 完全关闭
+};
 
 class Connection : public std::enable_shared_from_this<Connection> {
 public:
@@ -43,7 +52,10 @@ public:
     // 状态与属性
     int GetFd() const { return fd_; }
     EventLoop* GetLoop() const { return loop_; }
-    bool IsConnected() const { return state_ == ConnState::kConnected; }
+    /// 检查连接是否处于活动状态（可进行读写操作）
+    bool IsConnected() const {
+        return state_ != ConnState::kClosed && state_ != ConnState::kClosing && state_ != ConnState::kConnecting;
+    }
 
     void SetMessageCallback(MessageCallback cb) { message_callback_ = std::move(cb); }
     void SetCloseCallback(CloseCallback cb) { close_callback_ = std::move(cb); }
@@ -53,7 +65,7 @@ public:
     std::shared_ptr<HttpRequest> GetHttpParser() { return http_parser_; }
     
     // 【新增】清空读缓冲区 (用于长连接复用)
-    void ClearReadBuffer() { input_buffer_.clear(); }
+    void ClearReadBuffer();
 
 private:
     void HandleRead(int fd);
@@ -68,6 +80,20 @@ private:
     EventLoop* loop_;
     int fd_;
     std::atomic<ConnState> state_;
+
+    /// 检查状态转移是否允许
+    bool CanTransition(ConnState new_state) const;
+    /// 执行状态转移（带日志和验证）
+    void Transition(ConnState new_state, const std::string& reason = "");
+
+    /// 检查输入缓冲区是否超过限制
+    bool CheckInputBufferLimit() const;
+    /// 检查输出缓冲区是否超过限制
+    bool CheckOutputBufferLimit() const;
+    /// 暂停读取（背压机制）
+    void PauseReading();
+    /// 恢复读取
+    void ResumeReading();
 
     // 读缓冲区：依然保持 string，处理 HTTP 文本协议头
     std::string input_buffer_;
