@@ -57,3 +57,31 @@ struct GlobalLimits {
         return current_memory > kTotalMemoryLimit;
     }
 };
+
+/// 连接超时配置
+struct ConnectionTimeoutConfig {
+    /// 连接建立超时（秒）
+    static constexpr int kConnectTimeout = 5;
+    /// 读超时（秒）
+    static constexpr int kReadTimeout = 30;
+    /// 写超时（秒）
+    static constexpr int kWriteTimeout = 10;
+    /// Keep-Alive 空闲超时（秒）
+    static constexpr int kKeepAliveTimeout = 15;
+    /// 默认心跳间隔（秒）
+    static constexpr int kHeartbeatInterval = 60;
+
+    /// 检查超时配置是否有效
+    static bool IsValid() {
+        return kConnectTimeout > 0 &&
+               kReadTimeout > 0 &&
+               kWriteTimeout > 0 &&
+               kKeepAliveTimeout > 0 &&
+               kHeartbeatInterval > 0;
+    }
+
+    /// 获取默认配置
+    static ConnectionTimeoutConfig Default() {
+        return ConnectionTimeoutConfig{};
+    }
+};

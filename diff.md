@@ -1,5 +1,93 @@
 # Diff 记录 - TinyWebServer 关键代码修改
 
+## 2026-03-06 (阶段一完成)
+### 涉及文件
+1. `include/connection.h` - Connection 状态机扩展
+2. `src/connection.cpp` - 状态转移与资源限制实现
+3. `include/connection_limits.h` - 新增资源限制配置
+4. `implementation_plan.md` - 规划更新
+
+### 核心 Diff 摘要
+#### 1. Connection 状态机扩展 (7个状态)
+```diff
++enum class ConnState {
++    kConnecting,      ///< 连接建立中 (SYN_SENT)
++    kConnected,       ///< 连接已建立，等待请求
++    kReading,         ///< 读取请求中
++    kProcessing,      ///< 业务处理中 (生成响应)
++    kWriting,         ///< 发送响应中
++    kClosing,         ///< 正在关闭 (半关闭)
++    kClosed           ///< 完全关闭
++};
+```
+
+#### 2. 状态转移验证机制
+```diff
++bool Connection::CanTransition(ConnState new_state) const {
++    // 允许任何状态转移到 kClosing/kClosed（错误路径）
++    if (new_state == ConnState::kClosing) return true;
++    if (new_state == ConnState::kClosed) return true;
++
++    // 正常业务流程转移规则
++    switch (current) {
++        case ConnState::kConnecting: return new_state == ConnState::kConnected;
++        case ConnState::kConnected: return new_state == ConnState::kReading;
++        // ... 其他规则
++    }
++}
++
++void Connection::Transition(ConnState new_state, const std::string& reason) {
++    if (!CanTransition(new_state)) {
++        LOG_ERROR("Invalid state transition...");
++        // 无效转移自动触发关闭
++        state_ = ConnState::kClosing;
++        return;
++    }
++    LOG_DEBUG("State transition fd=%d: %d -> %d, reason: %s",
++              fd_, static_cast<int>(current), static_cast<int>(new_state), reason.c_str());
++    state_.store(new_state, std::memory_order_release);
++}
+```
+
+#### 3. 资源限制配置 (connection_limits.h)
+```diff
++struct ConnectionLimits {
++    static constexpr size_t kMaxInputBuffer = 64 * 1024;      // 64KB
++    static constexpr size_t kMaxOutputBuffer = 1 * 1024 * 1024; // 1MB
++    static constexpr size_t kMaxRequestSize = 8 * 1024;       // 8KB
++
++    static bool IsInputBufferExceeded(size_t current_size) {
++        return current_size > kMaxInputBuffer;
++    }
++    // ... 其他检查方法
++};
+```
+
+#### 4. 背压机制实现
+```diff
++void Connection::HandleRead(int fd) {
++    // ... 读取数据逻辑
++
++    // 背压检查：如果输入缓冲区超过限制，暂停读取
++    if (CheckInputBufferLimit()) {
++        PauseReading();
++    }
++}
++
++void Connection::PauseReading() {
++    loop_->UpdateEvent(fd_, EPOLLOUT | EPOLLET); // 只保留写事件
++}
+```
+
+### 修改意图
+1. **状态机完整性**：实现完整7状态模型，覆盖连接全生命周期
+2. **状态转移安全**：通过CanTransition验证，防止非法状态转换
+3. **资源边界控制**：防止单个连接消耗过多内存，避免OOM
+4. **背压机制**：缓冲区满时自动暂停读取，保护服务器稳定性
+5. **向后兼容**：保持现有API不变，新增功能通过扩展接口
+
+---
+
 ## 2026-03-06 22:03:38
 ### 涉及文件
 1. `implementation_plan.md` (新建)

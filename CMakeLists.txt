@@ -54,10 +54,12 @@ find_package(Threads REQUIRED)
 
 # ✅ 修复4：完整包含路径
 add_library(project_configs INTERFACE)
-target_include_directories(project_configs INTERFACE 
-    ${PROJECT_SOURCE_DIR}/include 
+target_include_directories(project_configs INTERFACE
+    ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/include/reactor
     ${PROJECT_SOURCE_DIR}/include/common
+    ${PROJECT_SOURCE_DIR}/include/error
+    ${PROJECT_SOURCE_DIR}/include/timer
     ${PROJECT_SOURCE_DIR}/test
 )
 
@@ -74,6 +76,8 @@ set(CORE_SOURCES_LIST
     src/http_parser.cpp
     src/thread_pool.cpp
     src/error.cpp
+    src/error/error.cpp
+    src/timer/timer_wheel.cpp
     src/static_resource_manager.cpp
     src/http_response.cpp
     src/Logger.cpp

@@ -4,6 +4,7 @@
 
 #include "reactor/event_loop.h"
 #include "Logger.h"
+#include "error/error.h"
 
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
@@ -13,13 +14,14 @@
 #include <cerrno>
 #include <cassert>
 
-EventLoop::EventLoop() 
+EventLoop::EventLoop()
     : looping_(false),
       quit_(false),
       calling_pending_functors_(false),
       thread_id_(std::this_thread::get_id()),
       epoll_fd_(epoll_create1(EPOLL_CLOEXEC)),
-      wakeup_fd_(CreateEventFd()) {
+      wakeup_fd_(CreateEventFd()),
+      timer_wheel_(60, 1000) {  // 60秒时间轮，1秒精度
     
     if (epoll_fd_ < 0) {
         LOG_FATAL("EventLoop: epoll_create1 failed");
@@ -38,15 +40,31 @@ void EventLoop::Loop() {
     assert(!looping_);
     thread_id_ = std::this_thread::get_id(); // 在此处正式绑定执行线程
     looping_ = true;
-    
+
     looping_ = true;
     quit_ = false;
-    
+
     while (!quit_) {
-        ProcessEvents(10); // 将 1000ms 改为 10ms，提高退出响应速度
+        // 处理定时器
+        ProcessTimers();
+
+        // 计算下一个定时器超时时间
+        int next_timeout = timer_wheel_.GetNextTickTimeout();
+        if (next_timeout < 0) {
+            // 没有定时器，使用默认超时（100ms）
+            next_timeout = 100;
+        } else if (next_timeout == 0) {
+            // 立即处理事件
+            next_timeout = 0;
+        } else if (next_timeout > 1000) {
+            // 限制最大超时时间为1秒
+            next_timeout = 1000;
+        }
+
+        ProcessEvents(next_timeout);
         DoPendingFunctors();
     }
-    
+
     looping_ = false;
 }
 
@@ -199,5 +217,53 @@ void EventLoop::HandleEvent(int fd, uint32_t events) {
     if (events & (EPOLLERR | EPOLLHUP)) {
         LOG_WARN("EventLoop::HandleEvent error/hup events on fd=%d", fd);
         RemoveEvent(fd);
+    }
+}
+
+// ============================================================================
+// 定时器管理实现
+// ============================================================================
+
+tinywebserver::Error EventLoop::AddTimer(int fd, int timeout_seconds, std::function<void()> callback) {
+    if (!IsInLoopThread()) {
+        // 如果不在IO线程，调度到IO线程执行
+        tinywebserver::Error result;
+        RunInLoop([this, fd, timeout_seconds, callback = std::move(callback), &result]() {
+            result = this->AddTimer(fd, timeout_seconds, std::move(callback));
+        });
+        return result;
+    }
+
+    return timer_wheel_.AddTimeout(fd, timeout_seconds, std::move(callback));
+}
+
+tinywebserver::Error EventLoop::RemoveTimer(int fd) {
+    if (!IsInLoopThread()) {
+        // 如果不在IO线程，调度到IO线程执行
+        tinywebserver::Error result;
+        RunInLoop([this, fd, &result]() {
+            result = this->RemoveTimer(fd);
+        });
+        return result;
+    }
+
+    return timer_wheel_.RemoveTimeout(fd);
+}
+
+bool EventLoop::HasTimer(int fd) const {
+    // 注意：此方法不是线程安全的，但通常只在IO线程调用
+    return timer_wheel_.HasTimer(fd);
+}
+
+void EventLoop::ProcessTimers() {
+    if (!IsInLoopThread()) {
+        // 确保在IO线程执行
+        RunInLoop([this]() { this->ProcessTimers(); });
+        return;
+    }
+
+    std::size_t triggered = timer_wheel_.Tick();
+    if (triggered > 0) {
+        LOG_DEBUG("EventLoop::ProcessTimers: triggered %zu timers", triggered);
     }
 }

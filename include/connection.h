@@ -13,6 +13,7 @@
 #include "buffer_chain.h"
 #include "static_resource_manager.h" // for StaticResource
 #include "connection_limits.h"
+#include "error/error.h"
 
 
 class HttpRequest; 
@@ -63,14 +64,25 @@ public:
     // HTTP 相关辅助
     std::string& GetInputBuffer() { return input_buffer_; }
     std::shared_ptr<HttpRequest> GetHttpParser() { return http_parser_; }
-    
+
     // 【新增】清空读缓冲区 (用于长连接复用)
     void ClearReadBuffer();
+
+    // 【新增】超时管理
+    void SetReadTimeout(int seconds);
+    void SetWriteTimeout(int seconds);
+    void SetIdleTimeout(int seconds);
+    void ResetIdleTimeout();
+    void DisableAllTimeouts();
+    bool HasActiveTimeout() const;
+
+    // 【新增】统一关闭路径
+    void Close(const tinywebserver::Error& reason);
 
 private:
     void HandleRead(int fd);
     void HandleWrite(int fd);
-    void HandleClose(int fd);
+    void HandleClose(int fd, const tinywebserver::Error& reason = tinywebserver::Error::Success());
     void HandleError(int fd);
     
     void SendInLoop(const std::string& data);
@@ -95,11 +107,30 @@ private:
     /// 恢复读取
     void ResumeReading();
 
+    /// 【新增】超时管理
+    void SetupTimeout(int seconds, const std::string& timeout_type);
+    void CancelTimeout(const std::string& timeout_type);
+    void OnTimeout(const std::string& timeout_type);
+    void UpdateActivityTimestamp();
+    void CheckAndSetTimeouts();
+
+    // 【新增】统一关闭路径内部实现
+    void CloseInLoop(const tinywebserver::Error& reason);
+
     // 读缓冲区：依然保持 string，处理 HTTP 文本协议头
     std::string input_buffer_;
     
     // 【修改】写缓冲区：升级为支持 Scatter/Gather 的链式缓冲
     BufferChain output_buffer_;
+
+    // 【新增】超时管理
+    int read_timeout_seconds_;
+    int write_timeout_seconds_;
+    int idle_timeout_seconds_;
+    bool read_timeout_active_;
+    bool write_timeout_active_;
+    bool idle_timeout_active_;
+    std::chrono::steady_clock::time_point last_activity_time_;
 
     std::shared_ptr<HttpRequest> http_parser_;
     MessageCallback message_callback_;
