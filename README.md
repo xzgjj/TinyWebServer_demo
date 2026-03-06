@@ -105,6 +105,8 @@ select/poll 的不确定性在于你不知道哪个 Socket 活跃。
 
 ## 三、Reactor 模式的工程理解
 
+
+
 ### 1. 从 epoll 到 Reactor 的抽象跃迁
 
 #### epoll 的本质
@@ -176,6 +178,8 @@ fd + events + callback  => Channel
 ---
 
 ## 四、关键实现的版本情况（结合 v5 现状）
+
+
 
 ### 1. 异步日志实现情况：
 
