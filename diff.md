@@ -249,4 +249,95 @@
 3. 预期效果
 ```
 
+---
+
+## 2026-03-07 (v7.3 完成)
+### 涉及文件
+1. `include/logging/structured_logger.h` - 结构化日志宏修复
+2. `src/logging/structured_logger.cpp` - 结构化日志实现完善
+3. `test/test_structured_log.cpp` - 新增结构化日志测试
+4. `CMakeLists.txt` - 测试目标集成
+5. `include/config/server_config.h` - JSON配置系统完善
+6. `src/config/server_config.cpp` - JSON配置解析实现
+7. `src/server_metrics.cpp` - 监控指标系统增强
+8. `configs/README.md` - 配置文档更新
+9. `configs/server.example.json` - 示例配置更新
+10. `notes.txt` - 进度记录更新
+
+### 核心 Diff 摘要
+#### 1. 结构化日志宏修复（参数命名冲突）
+```diff
+-#define LOG_STRUCTURED(level, ...) \
++#define LOG_STRUCTURED(lvl, ...) \
+     do { \
+         if (auto* manager = &::tinywebserver::StructuredLogManager::GetInstance(); \
+             manager->IsInitialized()) { \
+             ::tinywebserver::StructuredLogEntry entry; \
+             entry.timestamp = std::chrono::system_clock::now(); \
+-            entry.level = (level); \
++            entry.level = static_cast<decltype(entry.level)>(lvl); \
+             entry.file = __FILE__; \
+             // ... 其他字段
+         } \
+     } while(0)
+```
+
+#### 2. JSON 配置系统集成
+```diff
++// 包含 nlohmann/json 库
++#include <nlohmann/json.hpp>
++
++class ServerConfig {
++public:
++    static std::shared_ptr<ServerConfig> LoadFromFile(const std::string& path);
++    static std::shared_ptr<ServerConfig> LoadFromJson(const std::string& json_str);
++
++    // 配置热重载
++    bool Reload(const std::string& new_config);
++
++private:
++    bool LoadFromJsonObject(const nlohmann::json& j);
++    nlohmann::json config_json_;
++    std::shared_mutex config_mutex_;
++};
+```
+
+#### 3. 结构化日志测试添加
+```diff
++int main() {
++    // 创建测试配置
++    auto config = std::make_shared<tinywebserver::ServerConfig>();
++
++    // 初始化结构化日志系统
++    tinywebserver::InitStructuredLoggerFromConfig(config);
++
++    if (tinywebserver::StructuredLogManager::GetInstance().IsInitialized()) {
++        std::cout << "Structured logger initialized successfully" << std::endl;
++        LOG_S_INFO("Test structured log message: %s", "Hello, structured logging!");
++    }
++
++    return 0;
++}
+```
+
+#### 4. CMake 测试集成
+```diff
+ set(INTEGRATION_TESTS
+     test_timer
+     test_lifecycle
+     // ... 其他测试
+     test_basic
+     test_log
++    test_structured_log
+ )
+```
+
+### 修改意图
+1. **解决编译问题**：修复结构化日志宏参数命名冲突，避免编译器解析错误
+2. **完善JSON配置**：集成 nlohmann/json 库，实现配置文件解析与热重载支持
+3. **增强可观测性**：完善结构化日志系统，支持文本/JSON/彩色输出格式
+4. **测试覆盖**：添加结构化日志专项测试，验证配置初始化与日志记录功能
+5. **保持一致性**：所有更改遵循项目代码规范（C++17、命名约定、RAII原则）
+6. **向后兼容**：API无破坏性变更，新增功能通过扩展接口提供
+
 > **注意**：每次重要修改后更新此文件，保持增量记录，不删除历史记录。
