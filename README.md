@@ -1,8 +1,15 @@
+# TinyWebServer demo - Multi-Reactor High-Performance C++ Web Server
 
-# TinyWebServer demo – Multi-Reactor 高性能 C++ Web Server
+<p align="center">
+  <img src="https://img.shields.io/badge/-0EA5E9?style=flat-square" alt="bar1" />
+  <img src="https://img.shields.io/badge/-22C55E?style=flat-square" alt="bar2" />
+  <img src="https://img.shields.io/badge/-EAB308?style=flat-square" alt="bar3" />
+  <img src="https://img.shields.io/badge/-F97316?style=flat-square" alt="bar4" />
+  <img src="https://img.shields.io/badge/-EF4444?style=flat-square" alt="bar5" />
+</p>
 
-> **定位说明**：
-> 本项目是一个以 **Reactor 模式（epoll）** 为核心、面向工程实践与面试深度的 C++ 高性能 Web Server 示例实现。当前版本（v5）重点在 **多 Reactor 架构、事件驱动模型、连接生命周期管理与工程化代码结构**，并为后续 v6「工程级 Reactor」演进预留设计空间。
+> **定位说明**  
+> 本项目是基于 **Reactor 模式（epoll）** 的 C++ Web Server 工程化示例。当前处于 **v7.x 演进阶段**，重点在连接治理、可观测性、安全校验与协议完整性。
 
 ---
 
@@ -10,217 +17,112 @@
 
 ### 1. 项目目标
 
-* 构建一个**结构清晰、职责明确**的 Reactor 架构示例
-* 从**工程视角**理解 epoll 驱动的事件循环
-* 覆盖 **网络 IO、并发模型、状态机、资源管理** 等核心问题
-* 具备**一定深度**（Why / How / Trade-off）
+- 构建结构清晰、职责明确的 Multi-Reactor 架构示例。
+- 通过工程化演进，覆盖连接状态机、资源边界、错误处理、可观测性与安全控制。
+- 提供可测试、可回归、可扩展的 C++ 网络服务实践样本。
+- 兼顾教学价值与工程可落地性，强调 Why / How / Trade-off。
 
 ### 2. 非目标
 
-现阶段demo版本
+当前版本仍是工程化示例，不追求以下目标：
 
-* ❌ 不追求极限性能 Benchmark
-* ❌ 不实现完整生产级日志 / TLS / HTTP2
+- 不追求极限性能排行榜结果。
+- 不承诺完整生产级特性（如 TLS 全套、完整 HTTP/2 生态、分布式控制面）。
+- 不引入与主线目标无关的复杂中间件栈。
 
-> 本项目是**工程能力放大器**，不是“功能堆砌型 Demo”。
+> 项目定位是“工程能力放大器”，不是“功能堆砌型 Demo”。
 
 ---
 
 ## 二、整体架构概览
 
-Web Server是服务器软件（程序），或者是运行服务器软件硬件:功能是通过HTTP协议与客户端（通常是浏览器（Browser））进行通信，来接收，存储，处理来自客户端的HTTP请求，并对其请求做出HTTP响应，返回给客户端其请求的内容（文件、网页等）或返回一个Error信息
-通常用户使用Web浏览器与相应服务器进行通信。在浏览器中键入“域名”或“IP地址:端口号”;首先要通过TCP协议的三次握手建立与目标Web服务器的连接，然后HTTP协议生成针对目标Web服务器的HTTP请求报文，通过TCP、IP等协议发送到目标Web服务器上。
+当前采用 Main/Sub Reactor 分层模型：Main Reactor 专注接入，Sub Reactor 负责 I/O 事件循环与连接状态推进。
 
-
-```
-
-
+```text
         +------------------+
-        |    Acceptor      |
-        |  (Main Reactor)  |
+        |  Main Reactor    |
+        | accept + dispatch|
         +--------+---------+
                  |
-          新连接分发
                  v
         +------------------+     +------------------+
         | Sub Reactor #1   | ... | Sub Reactor #N   |
         | epoll + loop     |     | epoll + loop     |
         +--------+---------+     +--------+---------+
                  |                        |
-            Connection                Connection
-
-
-
+              Connection State Machine (ET + Non-blocking)
 ```
 
-Reactor模式：要求主线程（I/O处理单元）只负责监听文件描述符上是否有事件发生（可读、可写），若有，则立即通知工作线程（逻辑单元），将socket可读可写事件放入请求队列，交给工作线程处理。
-用epoll
-服务器程序通常需要处理三类事件：I/O事件，信号及定时事件
+### 架构分层
 
----
-使用线程池（半同步半反应堆模式）并发处理用户请求，主线程负责读写，工作线程（线程池中的线程）负责处理逻辑（HTTP请求报文的解析等等）
-线程池，就是一个pthread_t类型的普通数组，通过pthread_create()函数创建m_thread_number个线程，用来执行worker()函数以执行每个请求处理函数（HTTP请求的process函数），通过pthread_detach()将线程设置成脱离态（detached）后，当这一线程运行结束时，它的资源会被系统自动回收，而不再需要在其它线程中对其进行 pthread_join() 操作。
-操作工作队列一定要加锁（locker）
+| 层次 | 关键组件 | 职责 |
+| --- | --- | --- |
+| 接入层 | `Server` / Acceptor | 监听端口、accept 新连接、连接分发 |
+| 事件层 | `EventLoop` / `Channel` | `epoll_wait` 事件收集与回调派发 |
+| 连接层 | `Connection` | 状态机、读写缓冲、背压、超时、关闭路径 |
+| 协议层 | `HttpParser` / `HttpRequest` / `HttpResponse` | 解析请求、构建响应、Keep-Alive/条件请求能力 |
+| 安全层 | `RequestValidator` | 方法白名单、路径规范化、头部与请求体边界检查 |
+| 配置与观测层 | `ServerConfig` / `ServerMetrics` / Structured Logger | 配置外部化、指标导出、结构化日志 |
 
+### 核心约束
 
----
-
-### 架构角色说明
-
-| 组件       | 职责                             |
-| ---------- | -------------------------------- |
-| Acceptor   | 监听端口、accept 新连接、分发 fd |
-| EventLoop  | 封装 epoll_wait + 回调派发       |
-| Channel    | fd 与事件的抽象（事件 → 回调）   |
-| Connection | 一个 TCP 连接的生命周期与状态机  |
-| ThreadPool | Sub Reactor 线程管理             |
-
-> **核心思想**：
->
-> * epoll 只做一件事：**告诉你“ fd 发生了什么”**
-> * Reactor 做一件事：**事件 → 回调 → 状态推进**
-
-epoll将整个文件描述符集合维护在内核态，每次添加文件描述符的时候都需要执行一个系统调用;epoll底层通过红黑树来描述
-同时支持LT和ET模式。，当监测的fd数量较小，且各个fd都很活跃的情况下，使用select和poll；当监听的fd数量较多，且单位时间仅部分fd活跃的情况下，使用epoll会明显提升性能。
-Epoll对文件操作符的操作有两种模式：LT（电平触发）和ET（边缘触发）， 
-LT（电平触发）：类似select，LT会去遍历在epoll事件表中每个文件描述符，来观察是否有我们感兴趣的事件发生，如果有（触发了该文件描述符上的回调函数），epoll_wait就会以非阻塞的方式返回
-ET（边缘触发）：ET在发现有我们感兴趣的事件发生后，立即返回，并且sleep这一事件的epoll_wait，不管该事件有没有结束。 
-在使用ET模式时，必须要保证该文件描述符是非阻塞的（确保在没有数据可读时，该文件描述符不会一直阻塞）；并且每次调用read和write的时候都必须等到它们返回EWOULDBLOCK
-
-
-高性能网络编程的尽头是 “消除不确定性”。
-select/poll 的不确定性在于你不知道哪个 Socket 活跃。
-多线程的不确定性在于你不知道内核何时切换上下文。
-现代高性能框架（如 Nginx、DPDK、Seastar）的核心思想都是：让一个核心专职干一件事，尽量不被打断，尽量不切换上下文。
-
-目标：深入理解epoll的工作模式：厘清水平触发与边缘触发的区别及其正确的读写处理
-掌握非阻塞I/O的完整写法：处理EAGAIN/EWOULDBLOCK、合理使用应用层缓冲区，
-重视连接生命周期管理：
-
-
-
+- 一个 fd 只属于一个 EventLoop，避免跨线程迁移。
+- ET + 非阻塞 I/O，读写循环直到 `EAGAIN/EWOULDBLOCK`。
+- 所有请求先过 `RequestValidator`，再进入业务响应路径。
+- 资源必须有上限，错误路径必须可追踪、可观测。
 
 ---
 
 ## 三、Reactor 模式的工程理解
 
+### 1. 从 epoll 到 Reactor
 
+- `epoll` 负责事件就绪通知。
+- Reactor 负责把 `fd + events + callback` 组织成可演进的执行模型。
 
-### 1. 从 epoll 到 Reactor 的抽象跃迁
-
-#### epoll 的本质
-
-* 内核维护一个 **就绪事件队列**
-* 用户态通过 `epoll_wait` 获取事件集合
-
-#### Reactor 的价值
-
-* 把：
-
-  * fd
-  * 感兴趣的事件
-  * 事件触发后的处理逻辑
-
-  封装为 **Channel**
-
-```
-fd + events + callback  => Channel
+```text
+fd + events + callback => Channel
 ```
 
-> **Reactor = 事件分发器，而不是业务执行者**
+### 2. Connection 是状态机
+
+连接复杂度主要来自状态推进，而不是 socket API 本身。状态迁移由两类信号驱动：
+
+- 内核事件：`EPOLLIN / EPOLLOUT / ERR / HUP`
+- 业务结果：是否继续读取、是否仍有待发送数据、是否进入关闭路径
+
+### 3. Multi-Reactor 的价值
+
+- 降低单循环串行瓶颈。
+- 减少锁竞争与惊群影响。
+- 使“一个 EventLoop 一个线程”约束更容易落地。
 
 ---
 
-### 2. Connection 是“状态机”，不是 socket 封装
+## 四、关键实现的版本情况（结合当前 v7 状态）
 
-一个成熟的 Reactor 项目，**真正的复杂度在 Connection**。
+### 1. 版本能力矩阵
 
-#### Connection 的核心状态
+| 阶段 | 关键能力 | 状态 |
+| --- | --- | --- |
+| v5 基线 | Multi-Reactor、EventLoop/Channel、静态资源服务 | ✅ 已稳定 |
+| v7.1 | Connection 完整状态机、读写缓冲边界、背压机制 | ✅ 已完成 |
+| v7.2 | 统一错误码（`WebError`）、`Error` 封装、超时与关闭路径收敛 | ✅ 已完成 |
+| v7.3 | JSON 配置系统、指标系统、结构化日志、测试分类 | ✅ 已完成 |
+| v7.4 当前 | 请求安全验证、Keep-Alive、条件请求、HTTP/2 基础模块 | 🟡 已集成，持续打磨 |
 
-* Connecting
-* Connected
-* Reading
-* Writing
-* Closing
-* Closed
+### 2. 已落地的工程特性
 
-#### 状态推进驱动组成
+- 连接治理：显式状态转移、超时控制、统一关闭入口。
+- 安全治理：路径遍历防护、请求头/体积限制、方法白名单。
+- 可观测性：结构化日志 + 运行指标。
+- 配置化：静态根目录默认 `./public`，支持配置文件覆盖。
 
-* epoll 事件（EPOLLIN / EPOLLOUT / ERR / HUP）
-* 业务处理结果（是否还有待发送数据）
+### 3. 当前风险与技术债
 
-> 面试关键点：
->
-> * Reactor 不“读写数据”，它**驱动状态变化**
-
----
-
-### 3.  Multi-Reactor 的优势
-
-#### 单 Reactor 的瓶颈
-
-* epoll_wait 是串行的
-* 回调执行时间不可控
-
-#### Multi-Reactor 的拆解思路
-
-| 层级         | 关注点             |
-| ------------ | ------------------ |
-| Main Reactor | 连接建立（accept） |
-| Sub Reactor  | IO 事件驱动        |
-
-#### 关键设计决策
-
-* **一个 fd 只属于一个 EventLoop**
-* 连接建立后不跨线程迁移 fd
-
----
-
-## 四、关键实现的版本情况（结合 v5 现状）
-
-
-
-### 1. 异步日志实现情况：
-
-* ⚠️ **部分具备接口结构，但非完整工程级实现**
-* 当前日志更接近：
-
-  * 简化版异步写
-  * 缺少：
-
-    * 明确的 back-pressure
-    * 有界队列
-    * flush 策略与丢弃策略
-
-> 结论：**不是严格意义上的工程级异步日志**
-
----
-
-### 2. mmap 零拷贝实现情况：
-
-* ✔ 使用了 mmap/sendfile 等零拷贝思想
-* ⚠ 但：
-
-  * 未建立完整生命周期封装
-  * 未限制单连接映射大小
-  * 未统一异常回收路径
-
-> 属于：**“机制正确，工程防护不足”**
-
----
-
-### 3. 内存与资源管理
-
-#### 优点
-
-* RAII 思维较明确
-* fd / epoll 资源基本成对释放
-
-#### 风险点
-
-* 大响应未设置内存上限
-* 未引入 LRU / Cache 淘汰策略
-* 多线程下 Connection 生命周期需进一步收紧
+- HTTP/2 仍在基础能力阶段，协议完备性与兼容性测试需继续补齐。
+- 性能工程（内存池、I/O 批处理、系统化 benchmark）尚未完成。
+- 高压力与故障注入场景仍需进一步回归验证。
 
 ---
 
@@ -228,199 +130,122 @@ fd + events + callback  => Channel
 
 ### Reactor / epoll
 
-1. 为什么 epoll 适合高并发而不是高吞吐？
-   高并发：指 大量连接同时存在，但每个连接可能很少活跃
-   epoll 采用 事件驱动 + 内核监听，在空闲连接多、活跃连接少时 CPU 不会空转
-   高吞吐：指 连接活跃且数据量大，这更多依赖 IO 带宽和应用处理能力，epoll 只是事件通知，吞吐不一定比 select/poll 高
-   结论：epoll 擅长处理 大数量空闲/低活跃连接 → 高并发
+1. 为什么 epoll 更擅长高并发而非天然高吞吐？  
+   要点：epoll 优势在“只处理活跃连接”，吞吐还依赖带宽与业务处理效率。
 
----
+2. ET 与 LT 如何取舍？  
+   要点：ET 更高效但实现要求高；LT 更稳健但重复触发更多。
 
-2. LT 与 ET 在 Reactor 设计中的取舍？
-   模式	特点	Reactor 中取舍
-   LT（Level Triggered）	fd 可读/可写 → epoll_wait 持续返回	简单，代码容易写，不容易漏事件，但 重复触发，可能多余 CPU
-   ET（Edge Triggered）	只在状态改变时通知	高效，减少 epoll_wait 调用 → CPU 利好，但要求 一次性读写直到 EAGAIN，否则可能漏事件
-
-工程取舍：
-多数 Reactor accept + read/write 使用 ET 提升性能
-对简单/低并发 fd 可以 LT，容错性高
-
----
-
-3. 一个 fd 能否同时被两个 epoll 监听？为什么？
-   可以，但不推荐内核允许多个 epoll 实例注册同一个 fd
-
-问题：
-事件通知不可控：同一事件可能通知两个 epoll，造成 重复触发或惊群
-复杂资源管理，难保证线程安全
-工程实践：一个 fd 对应一个 EventLoop/epoll，简化状态管理
-
----
+3. 一个 fd 能否被多个 epoll 监听？  
+   要点：内核允许，但工程上通常禁止，避免事件重复与状态管理复杂化。
 
 ### Connection / 状态机
 
-4. Connection 为什么不能只用一个 read/write 回调？
-   一个 fd 的状态可能很复杂：读缓冲可能已满  写缓冲可能还有未发送数据
-   单回调不能区分不同状态，可能：写事件被触发但写缓冲为空 → 冗余 CPU 读事件被触发但 Connection 已关闭 → 错误
-   状态机设计：每个阶段（read_header/read_body/write_response）独立处理 → 更清晰可控
+4. 为什么不能只用一个 read/write 回调？  
+   要点：读写生命周期不同步，单回调难以表达复杂状态转移。
 
----
+5. 半关闭（FIN）如何处理？  
+   要点：读端关闭与写端收尾要分离，避免响应数据丢失。
 
-
-6. 半关闭（FIN）如何在 Reactor 中处理？
-   内核 fd 收到 FIN → read 返回 0
-   Reactor 处理方式：读端关闭：read 返回 0 → 标记 Connection 关闭读方向
-   写端可能还没关闭：继续发送剩余响应
-   状态机必须区分 半关闭 与 完全关闭，防止数据丢失
-
----
-
-7. 写事件什么时候应该关闭监听？
-   写事件的 fd 监听可以关闭的条件：
-
-写缓冲 全部发送完
-Connection 不再接受新的数据
-否则继续监听 防止缓冲区可写时未写完
-注意：过早关闭写监听 → 数据丢失
-
----
+6. 写事件何时取消监听？  
+   要点：发送缓冲耗尽且无后续数据时取消，避免空转。
 
 ### 并发与内核
 
-7. accept 是否应该在多线程中做？
-   多线程 accept 存在惊群（thundering herd）问题
-   工程实践：
-   一个 EventLoop/线程 负责 accept → 分发到 Worker
-   或者使用 SO_REUSEPORT + 多线程 accept
-   简单、高性能方案：主线程 accept → 分发到 I/O 线程池
+7. accept 是否应多线程并发？  
+   要点：默认单 acceptor + 分发更稳；多 accept 需处理惊群与均衡策略。
 
+8. epoll_wait 会不会惊群？  
+   要点：单线程单 epoll 不会；多线程共享同一 epoll 才有风险。
 
-8. epoll_wait 是否会产生惊群？
-   单 epoll_wait 不会
-   多线程共享同一 epoll 实例时可能惊群
-   多线程被唤醒，但只有一个线程能成功 accept/read
-   解决方案：
-   一个线程对应一个 epoll（主流 Reactor 模式）
-   或使用 ET + eventfd + queue 分发事件
+9. 为什么“一个 EventLoop 一个线程”是主流？  
+   要点：简化并发模型、减少锁与共享状态，工程可维护性更高。
 
 ---
 
-10. 为什么“一个 EventLoop 一个线程”是主流？
-    原因：
-    避免多线程共享 epoll → 惊群、锁竞争
-    每个 EventLoop 独立管理 Connection → 状态机单线程安全
-    简化调度逻辑 → 高可维护性、高性能
+## 六、Reactor 演进方向
 
-扩展：
-多核机器：多个 EventLoop 线程 + 任务分发 → 高并发处理
-保证单线程 Reactor 逻辑简单、避免复杂锁
+> 
 
+### 已落地（v7.1 ~ v7.3）
 
----
+- Connection 状态机与资源边界控制。
+- 统一错误处理体系与超时管理。
+- 配置系统、指标系统、结构化日志。
 
-## 六、v6：Reactor 演进方向
+### 当前重点（v7.4）
 
-### 高优先级
+- 请求安全验证闭环（方法、路径、头部、请求体）。
+- HTTP/1.1 完整性增强（Keep-Alive、条件请求）。
+- HTTP/2 基础模块集成与测试完善。
 
-* 明确 Connection 状态机（enum + 状态转移表）
-* 有界异步日志队列（丢弃/阻塞策略）
-* 统一错误码与关闭路径
+### 下一阶段（v7.5+）
 
-### 中优先级
-* 读写缓冲区水位控制
-* mmap 文件缓存 + LRU 淘汰
-* TimerWheel / TimeHeap 管理超时连接
+- 性能工程：分级内存池、I/O 批处理、性能回归基线。
+- 扩展工程：插件边界与最小可用插件链路。
+- 稳定性工程：压测、故障注入、恢复演练。
 
-### 低优先级
+### 里程碑验收标准
 
-* 更细粒度锁优化
-* 编译期优化与 inline 策略
+- 每阶段均满足：构建通过 + 对应测试通过 + 文档同步更新。
+- 新能力必须附带最小可回归用例。
+- 以“可运行、可观测、可回归”为完成标准，而非功能数量。
 
 ---
 
 ## 七、测试、部署与工程化建议
 
-### 测试
+### 1. 测试策略
 
-* Connection 状态机可单测
-* EventLoop 可 Mock epoll
+- 单元测试：状态机、请求校验、条件请求、Keep-Alive。
+- 集成测试：多连接、生命周期、异常关闭、并发行为。
+- 工具链验证：ASan/UBSan、Valgrind（按环境支持情况）。
 
-### 运维
+### 2. 常用命令
 
-* 日志等级与输出路径外部化
-* 暴露连接数、活跃 fd、事件循环延迟指标
-
-### 技术债务提示
-
-* 当前版本demo
-* 距离生产仍需：
-
-  * 更严格的边界控制
-  * 更系统的压测与故障演练
-
-### 调试与运行
-
-冒烟测试 (smoke)  
-集成测试   
-
-bash
-mkdir -p build
-cd build
-cmake ..
-make
-
-make -j4
-
-
+```bash
+# 清理
 python3 tools.py clean
 
-mkdir -p build
-cd build
-
-配置 CMake
-cmake -DCMAKE_BUILD_TYPE=Debug \
-      -DCMAKE_CXX_FLAGS="-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -O0 -g" \
-      ..
-
-
-cmake --build . --parallel
-
-
-cmake -DCMAKE_BUILD_TYPE=Debug ..
-在一个终端（左侧）启动服务器的 GDB 调试。 
-gdb ./server 
-
-
-第一步：清理环境   
-python3 tools.py clean
-第二步：全量编译并运行所有测试
-python3 tools.py all
-python3 tools.py debug --target test_backpressure
-
+# 构建
 python3 tools.py build
+
+# 测试
 python3 tools.py test
 
-使用 GDB 调试特定测试
+# 一键流程
+python3 tools.py all
+
+# 调试单测
 python3 tools.py debug --target test_backpressure
+```
 
-find . -type f -exec touch {} +
-终端 1 (启动服务器):  ./server
-终端 2 (运行测试脚本):
+### 3. 网络行为验证（示例）
 
-sudo kill -9 $(sudo lsof -t -i:8080)
+```bash
+# Keep-Alive 基础验证
+curl -v --keepalive-time 5 --keepalive http://localhost:8080/index.html
+```
 
+建议至少覆盖以下断言：
 
+- Keep-Alive 多请求复用连接。
+- 条件请求（`If-None-Match` / `If-Modified-Since`）行为正确。
+- 非法路径与非法请求头被安全拦截。
 
 ---
 
 ## 八、总结
 
-> **项目目的** 
+本项目的核心价值不在“功能数量”，而在“工程完整性”：
 
->* 理解 IO 事件的生命周期
->* 能把内核机制转化为工程抽象
->* 知道“什么该做，什么不该现在做”
+- 把内核事件机制转化为可维护的工程抽象。
+- 把连接生命周期与资源治理做成可验证体系。
+- 把配置、日志、指标与测试串成持续演进闭环。
 
+如果你希望继续提升专业度，建议下一步补充：
 
-
+1. 压测基线（QPS/延迟分位/内存占用）与版本对比表。  
+2. 故障演练清单（连接风暴、慢连接、畸形请求、磁盘异常）。  
+3. 关键路径时序图（accept -> parse -> validate -> respond -> close/reuse）。  
 

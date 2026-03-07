@@ -5,6 +5,7 @@
 #include "server_metrics.h"
 #include "reactor/event_loop.h"
 #include "Logger.h"
+#include "http/keep_alive_manager.h"
 
 using namespace tinywebserver;
 
@@ -13,9 +14,12 @@ using namespace tinywebserver;
 #include <sys/uio.h> // writev
 
 
-Connection::Connection(int fd, EventLoop* loop, std::shared_ptr<tinywebserver::ServerConfig> config)
+Connection::Connection(int fd, EventLoop* loop,
+                       std::shared_ptr<tinywebserver::ServerConfig> config,
+                       tinywebserver::KeepAliveManager* keep_alive_manager)
     : loop_(loop), fd_(fd), state_(ConnState::kConnecting),
       config_(config),
+      keep_alive_manager_(keep_alive_manager),
       read_timeout_seconds_(0),
       write_timeout_seconds_(0),
       idle_timeout_seconds_(0),
@@ -228,6 +232,10 @@ void Connection::HandleClose(int fd, const tinywebserver::Error& reason) {
 
     Transition(ConnState::kClosed, "connection closed");
     loop_->RemoveEvent(fd);
+    // 通知 Keep-Alive 管理器连接关闭
+    if (keep_alive_manager_) {
+        keep_alive_manager_->OnConnectionClose(fd);
+    }
     if (close_callback_) {
         close_callback_(fd);
     }
@@ -583,4 +591,34 @@ void Connection::CloseInLoop(const tinywebserver::Error& reason) {
         Transition(ConnState::kClosing, "error: " + reason.GetMessage());
         ShutdownInLoop();
     }
+}
+
+// ============================================================================
+// Keep-Alive 管理实现
+// ============================================================================
+
+void Connection::UpdateKeepAliveState(bool keep_alive, int idle_timeout) {
+    if (!keep_alive_manager_) {
+        return;
+    }
+    keep_alive_manager_->OnRequestStart(fd_, keep_alive, idle_timeout);
+}
+
+void Connection::OnRequestStart(bool keep_alive, int idle_timeout) {
+    UpdateKeepAliveState(keep_alive, idle_timeout);
+}
+
+void Connection::OnRequestComplete() {
+    if (!keep_alive_manager_) {
+        return;
+    }
+    keep_alive_manager_->OnRequestComplete(fd_);
+}
+
+bool Connection::ShouldKeepAlive() const {
+    if (!keep_alive_manager_) {
+        return false;
+    }
+    auto state = keep_alive_manager_->GetConnectionState(fd_);
+    return state && state->keep_alive;
 }

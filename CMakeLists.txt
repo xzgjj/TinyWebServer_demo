@@ -203,6 +203,8 @@ if(BUILD_TESTING)
         test_log
         test_structured_log
         test_request_validator
+        test_keep_alive
+        test_conditional_request
     )
 
     # 适合 CI 的快速冒烟集

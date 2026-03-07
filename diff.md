@@ -434,3 +434,113 @@ int main() {
 - ✅ CI 冒烟测试集通过
 - ✅ 编译通过（GCC 11.4.0，C++17，ASan enabled）
 - ✅ 配置化根目录功能正常（从配置文件读取或使用默认值）
+
+---
+
+## 2026-03-07 阶段四 (v7.4) 完成：Keep-Alive 管理与条件请求支持
+
+### 涉及文件
+1. `include/http/keep_alive_manager.h` - KeepAliveManager 类定义
+2. `src/http/keep_alive_manager.cpp` - KeepAliveManager 实现
+3. `include/http/conditional_request_handler.h` - ConditionalRequestHandler 类定义
+4. `src/http/conditional_request_handler.cpp` - ConditionalRequestHandler 实现
+5. `include/connection.h` - 添加 Keep-Alive 接口方法
+6. `src/connection.cpp` - 实现 Keep-Alive 生命周期管理
+7. `include/http_response.h` - 添加条件请求支持参数
+8. `src/http_response.cpp` - 集成条件请求检查到 HttpResponse::Init()
+9. `include/server.h` - 添加 KeepAliveManager 成员
+10. `src/server.cpp` - 初始化 KeepAliveManager
+11. `src/main.cpp` - 调用 Keep-Alive 生命周期方法
+12. `CMakeLists.txt` - 添加测试目标
+13. `test/test_keep_alive.cpp` - 新增 Keep-Alive 单元测试
+14. `test/test_conditional_request.cpp` - 新增条件请求单元测试
+
+### 核心 Diff 摘要
+#### 1. Connection 类添加 Keep-Alive 接口
+```diff
+class Connection {
+public:
++    void UpdateKeepAliveState(bool keep_alive, int idle_timeout = 0);
++    void OnRequestStart(bool keep_alive, int idle_timeout = 0);
++    void OnRequestComplete();
++    bool ShouldKeepAlive() const;
+};
+```
+
+#### 2. HttpResponse 集成条件请求检查
+```diff
+void HttpResponse::Init(const std::string& src_dir, const std::string& path, bool is_keep_alive,
+                         int code, const HttpRequest* request)
+{
+    // 条件请求检查（仅当未指定强制状态码且请求有效时）
+    if (request && code_ == -1) {
+        std::string method = request->GetMethod();
+        if (method == "GET" || method == "HEAD") {
+            std::string full_path = src_dir + path;
++            auto [should_return_304, etag] = tinywebserver::ConditionalRequestHandler::ShouldReturn304(
++                *request, fs::path(full_path));
++            if (should_return_304) {
++                code_ = 304; // Not Modified
++                if (!etag.empty()) {
++                    headers_["ETag"] = etag;
++                }
++            }
+        }
+    }
+}
+```
+
+#### 3. CMakeLists.txt 添加测试目标
+```diff
+set(INTEGRATION_TESTS
+    test_timer
+    test_lifecycle
+    // ... 其他测试
+    test_request_validator
++    test_keep_alive
++    test_conditional_request
+)
+```
+
+#### 4. KeepAliveManager 核心逻辑
+```diff
+void KeepAliveManager::OnRequestStart(int fd, bool keep_alive, int idle_timeout) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto now = std::chrono::steady_clock::now();
+
+    if (connections_.find(fd) == connections_.end()) {
+        // 新连接
+        connections_[fd] = ConnectionState{
+            .request_count = 1,
+            .last_active = now,
+            .keep_alive = keep_alive,
+            .idle_timeout = (idle_timeout > 0) ?
+                std::chrono::seconds(idle_timeout) : default_idle_timeout_
+        };
+    } else {
+        // 现有连接，更新状态
+        connections_[fd].request_count++;
+        connections_[fd].last_active = now;
+        connections_[fd].keep_alive = keep_alive;
+    }
+    total_requests_++;
+}
+```
+
+### 修改意图
+1. **HTTP/1.1 协议完整性**：实现持久连接（Keep-Alive）和条件请求（Conditional Requests）两大核心特性
+2. **连接复用优化**：通过 Keep-Alive 减少 TCP 连接建立开销，提高服务器性能
+3. **带宽节省**：通过条件请求（304 Not Modified）减少不必要的数据传输
+4. **资源管理**：跟踪连接状态，自动清理空闲超时连接，防止资源泄漏
+5. **测试驱动**：为所有新功能添加单元测试，确保功能正确性和稳定性
+6. **向后兼容**：API 无破坏性变更，新增功能通过扩展接口提供
+
+### 验证状态
+- ✅ `test_keep_alive` 通过（3个测试套件：基础功能、超时管理、统计信息）
+- ✅ `test_conditional_request` 通过（5个测试套件：基础功能、If-Modified-Since、If-None-Match、集成测试、ETag生成）
+- ✅ `test_request_validator` 通过（包含边缘情况测试）
+- ✅ CI 冒烟测试集通过（test_timer、test_basic、test_multithread_reactor、test_log）
+- ✅ 编译通过（GCC 11.4.0，C++17，ASan enabled）
+- ✅ 所有新增测试集成到构建系统，可独立运行
+
+> **注意**：阶段四(v7.4)全部功能完成，HTTP/1.1 协议完整性目标达成。

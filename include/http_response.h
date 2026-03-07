@@ -8,6 +8,7 @@
 #include <memory>
 #include <filesystem>
 #include "static_resource_manager.h"
+#include "http_request.h"
 
 /**
  * @brief HTTP 响应类
@@ -21,8 +22,14 @@ public:
 
     /**
      * @brief 初始化响应参数
+     * @param src_dir 静态资源根目录
+     * @param path 请求路径（相对）
+     * @param is_keep_alive 是否保持连接
+     * @param code 强制状态码（如果>=0则使用）
+     * @param request HTTP 请求对象（用于条件请求检查）
      */
-    void Init(const std::string& src_dir, const std::string& path, bool is_keep_alive = false, int code = -1);
+    void Init(const std::string& src_dir, const std::string& path, bool is_keep_alive = false,
+              int code = -1, const HttpRequest* request = nullptr);
     
     /**
      * @brief 构建响应报文逻辑

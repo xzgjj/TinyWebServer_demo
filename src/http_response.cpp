@@ -2,6 +2,7 @@
 
 #include "http_response.h"
 #include "Logger.h"
+#include "http/conditional_request_handler.h"
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -53,7 +54,8 @@ HttpResponse::~HttpResponse()
 {
 }
 
-void HttpResponse::Init(const std::string& src_dir, const std::string& path, bool is_keep_alive, int code)
+void HttpResponse::Init(const std::string& src_dir, const std::string& path, bool is_keep_alive,
+                         int code, const HttpRequest* request)
 {
     code_ = code;
     is_keep_alive_ = is_keep_alive;
@@ -63,6 +65,26 @@ void HttpResponse::Init(const std::string& src_dir, const std::string& path, boo
     body_string_.clear();
     status_line_.clear();
     headers_.clear();
+
+    // 条件请求检查（仅当未指定强制状态码且请求有效时）
+    if (request && code_ == -1) {
+        // 仅对 GET 和 HEAD 方法检查条件请求
+        std::string method = request->GetMethod();
+        if (method == "GET" || method == "HEAD") {
+            // 构建完整文件路径
+            std::string full_path = src_dir + path;
+            // 使用 ConditionalRequestHandler 检查是否应返回 304
+            auto [should_return_304, etag] = tinywebserver::ConditionalRequestHandler::ShouldReturn304(
+                *request, fs::path(full_path));
+            if (should_return_304) {
+                code_ = 304; // Not Modified
+                // 存储 ETag 以便在响应头部中添加
+                if (!etag.empty()) {
+                    headers_["ETag"] = etag;
+                }
+            }
+        }
+    }
 }
 
 void HttpResponse::MakeResponse()
@@ -100,10 +122,12 @@ void HttpResponse::MakeResponse()
             ErrorHtml_();
         }
     }
-    else
+    else if (code_ != 304)
     {
+        // 对于非 200/304 状态码，生成错误页面
         ErrorHtml_();
     }
+    // 304 Not Modified 不需要消息体
 
     AddStateLine_();
     AddHeader_();
@@ -119,12 +143,35 @@ void HttpResponse::AddStateLine_()
 void HttpResponse::AddHeader_() {
     // 确保 header_string_ 被重置，防止重复调用叠加
     header_string_ = status_line_;
+
+    // 304 Not Modified 响应特殊处理
+    if (code_ == 304) {
+        // 304 响应不应有 Content-Type 和 Content-Length
+        // 添加必要的头部：Date, ETag (如果存在), Connection
+        // Date 头部（当前时间）
+        auto now = std::chrono::system_clock::now();
+        std::string date_str = tinywebserver::ConditionalRequestHandler::FormatHttpDate(now);
+        header_string_ += "Date: " + date_str + "\r\n";
+
+        // ETag 头部（如果已存储）
+        auto it = headers_.find("ETag");
+        if (it != headers_.end()) {
+            header_string_ += "ETag: " + it->second + "\r\n";
+        }
+
+        // Connection 头部
+        header_string_ += (is_keep_alive_ ? "Connection: keep-alive\r\n" : "Connection: close\r\n");
+        header_string_ += "\r\n";
+        return;
+    }
+
+    // 正常响应的头部
     header_string_ += "Content-Type: " + GetFileType_() + "\r\n";
-    
+
     // 获取长度：如果是静态文件则取文件大小，否则取错误页面的 body_string_ 大小
-    size_t body_len = GetBodyLen(); 
+    size_t body_len = GetBodyLen();
     header_string_ += "Content-Length: " + std::to_string(body_len) + "\r\n";
-    
+
     header_string_ += (is_keep_alive_ ? "Connection: keep-alive\r\n" : "Connection: close\r\n");
     header_string_ += "\r\n";
 }
