@@ -317,3 +317,91 @@
 
 ### 本次增量记录
 - 2026-03-07：阶段四(v7.4)完成 - Keep-Alive管理与条件请求支持集成完成，新增测试并通过验证。
+
+---
+
+## 2026-03-07 阶段五开始：性能基准测试框架建立
+
+### 已完成（本会话）
+1. **基准测试框架核心架构**：
+   - 创建目录结构：`benchmark/`, `benchmark_results/`, `configs/benchmark/`
+   - 设计统一接口：`Benchmark`基类、`BenchmarkResult`、`BenchmarkConfig`
+   - 实现四种基准测试类型：QPS、延迟、内存、并发
+
+2. **代码实现**：
+   - `include/benchmark.h`：核心接口定义
+   - `benchmark/src/benchmark_base.cpp`：基础实现（JSON序列化、统计计算）
+   - `benchmark/src/benchmark_qps.cpp`：QPS测试实现
+   - `benchmark/src/benchmark_latency.cpp`：延迟测试实现
+   - `benchmark/src/benchmark_memory.cpp`：内存测试实现（含资源监控器）
+   - `benchmark/src/benchmark_concurrent.cpp`：并发测试实现
+   - `benchmark/src/benchmark_factory.cpp`：工厂模式实现
+   - `benchmark/src/benchmark_runner.cpp`：命令行运行器
+
+3. **配置与集成**：
+   - 示例配置文件：`configs/benchmark/*.json`
+   - CMake集成：添加`BUILD_BENCHMARKS`选项，自动编译基准测试框架
+   - `tools.py`扩展：添加`benchmark`子命令支持
+   - 文档更新：README.md添加基准测试框架说明
+
+4. **数据格式设计**：
+   - JSON格式结果存储：`metadata.json`、`result.json`
+   - CSV格式导出：`metrics.csv`、`time_series.csv`
+   - 环境信息记录：Git提交哈希、时间戳、系统信息
+
+### 核心设计原则
+1. **数据驱动**：每个优化必须提供前后对比数据
+2. **可重复性**：测试结果可重复、可追溯、可对比
+3. **自动化**：与构建系统、CI/CD流水线集成
+4. **全面覆盖**：吞吐量、延迟、内存、并发多维度
+
+### 使用方式
+```bash
+# 构建并运行基准测试
+python3 tools.py build
+python3 tools.py benchmark list
+python3 tools.py benchmark run --type qps --duration 30 --connections 100
+
+# 创建性能基线
+python3 tools.py benchmark baseline
+
+# 直接使用运行器
+./build/benchmark_runner help
+```
+
+### 更新“已完成/正在进行”状态
+#### 已完成（新增）
+- 阶段五 v7.5：性能基准测试框架
+  - 框架架构与接口设计
+  - 四种基准测试实现（QPS、延迟、内存、并发）
+  - 构建系统集成与工具链支持
+  - 文档与示例配置
+  - 编译错误修复与基本功能验证（benchmark_runner编译成功，help/list命令工作）
+
+#### 正在进行
+1. 阶段五 v7.5 剩余项：
+   - 创建初始性能基线（需要服务器集成）
+   - 集成到CI/CD流水线
+   - 性能回归检测机制
+
+### 未提交改动文件
+- `include/benchmark.h`
+- `benchmark/src/*.cpp` (6个文件，包含修复的benchmark_memory.cpp和benchmark_concurrent.cpp)
+- `configs/benchmark/*.json` (4个文件)
+- `CMakeLists.txt` (添加基准测试构建)
+- `tools.py` (添加benchmark子命令)
+- `README.md` (添加基准测试文档)
+
+### 上下文断点（当前状态）
+**最后一条关键信息**：阶段五(v7.5)基准测试框架已完整实现并通过编译验证，包含QPS、延迟、内存、并发四种测试类型。基准测试运行器编译成功，help/list命令工作正常。剩余工作：集成服务器以支持实际基准测试运行，创建初始性能基线，CI/CD集成。
+
+### Git Commit 记录
+- 待提交：阶段五基准测试框架初始实现
+  - 框架架构：Benchmark基类接口与四种具体实现
+  - 工具集成：CMake构建支持，tools.py扩展
+  - 数据格式：JSON/CSV结果存储，环境信息记录
+  - 文档：README.md更新使用说明
+
+### 本次增量记录
+- 2026-03-07：阶段五(v7.5)基准测试框架建立 - 完整架构实现，支持数据驱动性能优化验证。
+- 2026-03-07：修复基准测试框架编译错误 - 添加缺失头文件(dirent.h, fcntl.h, poll.h)，修复时间类型不匹配，移除无效start_time_初始化，基准测试运行器编译成功并通过基本功能测试。

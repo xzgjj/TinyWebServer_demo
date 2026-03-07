@@ -235,7 +235,99 @@ curl -v --keepalive-time 5 --keepalive http://localhost:8080/index.html
 
 ---
 
-## 八、总结
+## 八、性能基准测试框架 (v7.5+)
+
+### 1. 设计目标
+- **数据驱动优化**：所有性能优化必须有前后对比数据
+- **可重复验证**：测试结果必须可重复、可追溯、可对比
+- **全面覆盖**：覆盖吞吐量、延迟、内存、并发等多个维度
+- **自动化集成**：与构建系统、CI/CD流水线无缝集成
+
+### 2. 测试类型
+
+| 测试类型 | 核心指标 | 测量工具 |
+|---------|----------|----------|
+| **QPS测试** | 每秒请求数、吞吐量、成功率 | 内置HTTP客户端、统计分析 |
+| **延迟测试** | P50/P90/P99/P99.9延迟、延迟分布 | 高精度计时、百分位计算 |
+| **内存测试** | RSS/VmSize、内存增长、潜在泄漏 | `/proc`监控、资源跟踪 |
+| **并发测试** | 最大连接数、连接建立速率、稳定性 | 连接池、心跳监测 |
+
+### 3. 数据存储与格式
+```
+TinyWebServer_demo/
+├── benchmark_results/           # 测试结果存储 (.gitignore)
+│   ├── 2026-03-07T10-30-00_abcd1234/  # 时间戳+提交哈希
+│   │   ├── metadata.json       # 测试环境信息
+│   │   ├── result.json         # 测试结果 (JSON格式)
+│   │   ├── metrics.csv         # 指标表格 (CSV格式)
+│   │   └── time_series.csv     # 时间序列数据
+│   └── baseline/               # 基线数据 (符号链接)
+├── configs/benchmark/          # 配置文件
+│   ├── qps_config.json         # QPS测试配置
+│   ├── latency_config.json     # 延迟测试配置
+│   ├── memory_config.json      # 内存测试配置
+│   └── concurrent_config.json  # 并发测试配置
+└── benchmark/                  # 基准测试源代码
+```
+
+### 4. 使用方式
+
+#### 命令行工具
+```bash
+# 构建基准测试框架
+python3 tools.py build
+
+# 列出可用的基准测试类型
+python3 tools.py benchmark list
+
+# 运行QPS测试
+python3 tools.py benchmark run --type qps --duration 30 --connections 100
+
+# 从配置文件运行测试
+python3 tools.py benchmark run --type qps --config configs/benchmark/qps_config.json
+
+# 创建性能基线（运行全套测试）
+python3 tools.py benchmark baseline
+
+# 对比测试结果
+python3 tools.py benchmark compare --baseline benchmark_results/baseline/qps --current benchmark_results/2026-03-07T10-30-00_abcd1234
+```
+
+#### 直接使用基准测试运行器
+```bash
+# 编译后直接运行
+./build/benchmark_runner run --type qps --duration 10 --connections 50
+
+# 查看帮助
+./build/benchmark_runner help
+```
+
+### 5. 数据驱动优化流程
+```
+[基线测量] → [实施优化] → [后优化测量] → [数据对比分析] → [决策：接受/回滚]
+```
+
+### 6. 集成到开发流程
+- **每次提交前**：运行快速基准测试（30秒）
+- **性能优化时**：必须提供前后对比数据
+- **版本发布前**：创建完整性能基线
+- **CI/CD集成**：自动检测性能回归（>5%退化）
+
+### 7. 性能指标示例
+```json
+{
+  "metrics": [
+    {"name": "qps", "value": 12500.5, "unit": "requests/second"},
+    {"name": "p99_latency", "value": 23.4, "unit": "ms"},
+    {"name": "memory_growth", "value": 512, "unit": "KB"},
+    {"name": "max_connections", "value": 8500, "unit": "connections"}
+  ]
+}
+```
+
+---
+
+## 九、总结
 
 本项目的核心价值不在“功能数量”，而在“工程完整性”：
 
@@ -243,9 +335,6 @@ curl -v --keepalive-time 5 --keepalive http://localhost:8080/index.html
 - 把连接生命周期与资源治理做成可验证体系。
 - 把配置、日志、指标与测试串成持续演进闭环。
 
-如果你希望继续提升专业度，建议下一步补充：
-
-1. 压测基线（QPS/延迟分位/内存占用）与版本对比表。  
-2. 故障演练清单（连接风暴、慢连接、畸形请求、磁盘异常）。  
-3. 关键路径时序图（accept -> parse -> validate -> respond -> close/reuse）。  
+ 
+关键路径时序图（accept -> parse -> validate -> respond -> close/reuse）。  
 
