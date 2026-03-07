@@ -192,6 +192,7 @@ if(BUILD_TESTING)
         test_multithread_reactor
         test_basic
         test_log
+        test_structured_log
     )
 
     # 适合 CI 的快速冒烟集
