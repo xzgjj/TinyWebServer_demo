@@ -31,10 +31,10 @@ int main(int argc, char* argv[]) {
 
     // 1. 确保环境收敛：创建资源目录
     struct stat st;
-    if (stat("./www", &st) != 0) {
-        mkdir("./www", 0755);
+    if (stat("./public", &st) != 0) {
+        mkdir("./public", 0755);
         // 创建默认首页以防 404 导致集成测试失败
-        system("echo '<h1>TinyWebServer V3</h1>' > ./www/index.html");
+        system("echo '<h1>TinyWebServer V3</h1>' > ./public/index.html");
     }
 
     Logger::GetInstance().Init("./tiny_server.log", LogLevel::LOG_LEVEL_DEBUG);
@@ -70,7 +70,7 @@ int main(int argc, char* argv[]) {
             if (parser->Parse(buffer)) {
                 HttpResponse response;
                 // 确保 Init 逻辑能正确处理路径
-                response.Init("./www", parser->GetPath(), false); 
+                response.Init("./public", parser->GetPath(), false); 
                 response.MakeResponse();
 
                 // 异步发送：Reactor 会处理发送队列

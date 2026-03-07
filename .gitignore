@@ -24,4 +24,5 @@ bench.log
 CLAUDE.md
 notes.txt
 implementation_plan.md
+AGENT_EXECUTION_PROTOCOL.md
 .claude/

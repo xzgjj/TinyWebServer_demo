@@ -52,7 +52,7 @@ public:
 
     // 静态资源配置
     struct StaticOptions {
-        std::string root = "./www";
+        std::string root = "./public";
         size_t cache_size = 100;
         int cache_ttl = 300;                      // 秒
     };
