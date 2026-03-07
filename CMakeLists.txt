@@ -89,6 +89,8 @@ target_include_directories(project_configs INTERFACE
     ${PROJECT_SOURCE_DIR}/include/timer
     ${PROJECT_SOURCE_DIR}/include/config
     ${PROJECT_SOURCE_DIR}/include/logging
+    ${PROJECT_SOURCE_DIR}/include/http
+    ${PROJECT_SOURCE_DIR}/include/http2
     ${PROJECT_SOURCE_DIR}/third_party
     ${PROJECT_SOURCE_DIR}/test
 )
@@ -119,6 +121,13 @@ set(CORE_SOURCES_LIST
     reactor/event_loop_thread.cpp
     reactor/event_loop_thread_pool.cpp
     reactor/socket_utils.cpp
+    src/request_validator.cpp
+    src/http/keep_alive_manager.cpp
+    src/http/conditional_request_handler.cpp
+    src/http2/h2_frame_parser.cpp
+    src/http2/h2_connection.cpp
+    src/http2/h2_stream.cpp
+    src/http2/hpack_decoder.cpp
 )
 
 # 检查每个源文件是否存在
@@ -193,6 +202,7 @@ if(BUILD_TESTING)
         test_basic
         test_log
         test_structured_log
+        test_request_validator
     )
 
     # 适合 CI 的快速冒烟集

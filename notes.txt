@@ -1,0 +1,262 @@
+# TinyWebServer 项目笔记 - 增量更新日志
+
+## 当前进度
+### 已完成功能
+1. **多 Reactor 架构**：
+   - Main Reactor (Acceptor) 监听端口，accept 新连接
+   - Sub Reactor 线程池管理，每个线程独立 EventLoop
+   - 一个 fd 只属于一个 EventLoop 的原则
+
+2. **事件驱动核心**：
+   - EventLoop 封装 epoll_wait + 事件回调派发
+   - Channel 抽象（fd + 事件 + 回调）
+   - 边缘触发（ET）模式支持
+
+3. **Connection 生命周期**：
+   - TCP 连接状态机基础框架
+   - 非阻塞 I/O，正确处理 EAGAIN/EWOULDBLOCK
+   - 读写缓冲区管理（buffer_chain）
+
+4. **HTTP 协议处理**：
+   - HTTP 请求解析器（http_parser）
+   - 静态资源管理器（static_resource_manager）
+   - HTTP 响应生成（http_response）
+
+5. **基础设施**：
+   - 异步日志系统（async_logger）
+   - 线程池（thread_pool）
+   - 定时器管理器（timer_manager）
+   - 服务器指标收集（server_metrics）
+
+6. **工程化工具**：
+   - CMake 构建系统（支持 Debug/Release、ASan、测试分类）
+   - Python 工具脚本（tools.py）用于清理、构建、测试、调试
+   - CI/CD 流水线（GitHub Actions，包含 ASan 烟雾测试和 Valgrind 内存检查）
+
+### 已完成功能（新增）
+7. **Connection 完整状态机** (v7.1)：
+   - 7个状态枚举：Connecting、Connected、Reading、Processing、Writing、Closing、Closed
+   - 状态转移验证（CanTransition）与安全转换（Transition）
+   - 原子操作保证线程安全，错误转移自动关闭连接
+
+8. **资源边界控制** (v7.1)：
+   - ConnectionLimits结构体：64KB输入缓冲区、1MB输出缓冲区限制
+   - 实时边界检查（CheckInputBufferLimit、CheckOutputBufferLimit）
+   - 背压机制：缓冲区满时暂停读取（PauseReading/ResumeReading）
+   - 发送前预检查防止内存溢出
+
+### 正在进行的工作
+1. **有界异步日志队列**：
+   - 实现日志队列容量限制（10000条）
+   - 添加队列满时的丢弃/阻塞策略
+   - 优化后台写线程的唤醒机制
+
+2. **统一错误处理体系**：
+   - 定义项目级错误码（WebError枚举）
+   - 实现Error包装类（兼容系统errno）
+   - 统一Connection关闭路径与错误报告
+
+3. **定时器管理器集成**：
+   - 集成TimerWheel时间轮实现
+   - 为Connection添加读写超时控制
+   - 连接空闲超时管理
+
+## 关键决策
+### 2026-03-06：CI 流水线优化与测试分类
+**刚才解决了什么复杂的逻辑？**
+- 重构了 `.github/workflows/ci.yml`，将单一任务拆分为两个独立任务：
+  1. `build-and-test`：使用 ASan 快速运行冒烟测试（test_timer、test_basic、test_multithread_reactor、test_log）
+  2. `memcheck`：禁用 ASan，使用 Valgrind 进行内存泄漏检测
+- 在 `CMakeLists.txt` 中引入了 CTest 集成，为测试添加标签（smoke、integration、benchmark）
+- 设置了测试超时（30秒）和分类运行机制
+
+**为什么这么改？**
+1. **分离关注点**：ASan 和 Valgrind 不能同时使用，拆分后可以充分发挥两者优势
+2. **加速 CI**：冒烟测试快速反馈，内存检查作为后续深度验证
+3. **可维护性**：测试分类便于选择性运行（开发时跑 smoke，发布前跑全部）
+4. **错误隔离**：Valgrind 日志单独保存，便于分析内存问题
+
+## 核心约束（重申）
+1. **一个 fd 只属于一个 EventLoop**：禁止跨线程迁移 fd，简化并发模型
+2. **边缘触发（ET）**：所有 socket 操作必须使用 ET 模式，循环读写直到 EAGAIN
+3. **非阻塞 I/O**：所有 fd 必须设置为 O_NONBLOCK
+4. **RAII 资源管理**：每个资源必须有明确的拥有者和生命周期
+5. **错误处理**：所有系统调用必须检查返回值，错误信息必须记录
+
+## 待办事项
+### 短期（v7.1 完善）
+1. [✓] 明确 Connection 状态机，实现状态转移表 (已完成)
+2. [ ] 实现有界异步日志队列，添加队列满时的丢弃策略
+3. [ ] 统一错误码体系，定义项目级错误枚举
+4. [✓] 添加读写缓冲区水位控制，防止单个连接内存溢出 (已完成)
+5. [ ] 集成 TimerWheel / TimeHeap 管理超时连接
+6. [ ] 为状态机添加单元测试覆盖
+
+### 中期（工程化提升）
+1. [ ] 添加性能基准测试套件（test_log_bench 等）
+2. [ ] 实现配置文件解析，支持参数外部化
+3. [ ] 添加 Prometheus 指标导出端点
+4. [ ] 完善文档：API 文档、设计决策记录、性能调优指南
+
+### 长期（特性扩展）
+1. [ ] 集成 DeepSeek R1 推理接口（作为可选插件）
+2. [ ] 支持 HTTP/1.1 持久连接（Keep-Alive）
+3. [ ] 实现简单的反向代理功能
+4. [ ] 添加 WebSocket 支持
+
+### Claude 最新建议
+- 优先完成 Connection 状态机明确化，这是当前架构中最复杂的部分
+- 为每个状态转移添加单元测试，确保状态转换的正确性
+- 考虑使用 `std::variant` 或状态模式重构 Connection，提高类型安全性
+- 异步日志队列实现时注意线程安全，使用无锁队列或细粒度锁
+
+### 工程化进展 (2026-03-06)
+**正在执行详细实现规划**：`implementation_plan.md`
+- **阶段一**：Connection 完整状态机 + 资源边界控制 (v7.1) ✅ **已完成**
+- **阶段二**：统一错误处理 + 定时器管理 (v7.2) ✅ **已完成**
+- **阶段三**：JSON 配置系统 + 监控指标 (v7.3) ⏳ **进行中**
+- **阶段四**：请求安全验证 + HTTP/1.1 完整性 (v7.4)
+- **阶段五**：性能优化 + 插件系统 (v7.5+)
+
+**当前状态**：阶段一核心功能已实现，通过冒烟测试验证。保持向后兼容，API无破坏性变更。
+
+## 上下文断点
+**如果我现在重启会话，我需要知道的最后一条关键信息是什么？**
+> 已开始阶段三（v7.3）实现：1) JSON配置系统框架已完成（ServerConfig类，需完善JSON解析），2) 增强的ServerMetrics指标系统（支持Prometheus导出），3) 结构化日志系统框架（StructuredLogEntry + StructuredLogManager），4) 示例配置文件。当前需解决JSON库集成问题，完善配置解析和与现有代码集成。所有更改保持向后兼容。
+
+---
+
+**更新记录**
+- 2026-03-06：创建项目笔记，记录当前进度、关键决策和待办事项
+- 2026-03-06：完成阶段一（v7.1）实现：Connection状态机+资源边界控制
+- 2026-03-07：开始阶段三（v7.3）实现：JSON配置系统+监控指标+结构化日志
+  - 集成 nlohmann/json 库到 CMake 构建系统
+  - 实现 ServerConfig 配置类框架
+  - 增强 ServerMetrics 指标系统（添加请求状态码分布、流量统计、资源监控）
+  - 实现结构化日志系统（StructuredLogEntry + StructuredLogManager）
+  - 创建示例配置文件和文档
+- 2026-03-07：修复结构化日志宏编译问题，添加测试用例
+- 每次 Git Commit 后同步更新此文件，保持增量记录
+
+---
+
+## 2026-03-07 审核补充（针对 notes.txt 规范）
+
+### 审核结论
+1. 已满足：已有“当前进度/关键决策/核心约束/待办/上下文断点”主结构。
+2. 不满足并已补充：
+   - 进度与仓库现状存在偏差（已从“阶段三进行中”纠偏为“阶段三已完成、阶段四进行中”）。
+   - 缺少“上下文即将耗尽时的强制更新模板”与“立即记录断点”的执行格式。
+   - 缺少“每次 Git Commit 后 notes.txt 同步检查”的可执行清单。
+
+### 当前进度（纠偏）
+#### 已完成（以 Git 历史为准）
+1. 阶段一 v7.1：Connection 状态机 + 资源边界控制（commit: `242e552`）。
+2. 阶段二 v7.2：统一错误处理 + 定时器管理（commit: `1d946a8`）。
+3. 阶段三 v7.3：JSON 配置系统 + 指标系统 + 结构化日志（commit: `fc2c227`）。
+
+#### 正在进行
+1. 阶段四 v7.4（请求安全验证 + HTTP/1.1 完整性）已开始：
+   - 新增 `RequestValidator`（路径规范化、方法白名单、头部与请求体大小限制）。
+   - `HttpRequest` 增强为可获取 `method/version/headers/content-length/keep-alive`。
+   - 新增 `test_request_validator` 并接入 CMake 测试目标。
+   - 验证状态：当前会话环境缺少可用 Windows C++ toolchain（`nmake`/编译器缺失），暂未完成本地编译跑测确认。
+2. 当前未提交改动文件：
+   - `CMakeLists.txt`
+   - `include/http_request.h`
+   - `src/http_request.cpp`
+   - `include/request_validator.h`
+   - `src/request_validator.cpp`
+   - `test/test_request_validator.cpp`
+
+### 关键决策（本轮）
+**刚解决的复杂逻辑**
+1. 将 HTTP 请求从“只提取 path”升级为“请求行 + 头部字段”完整解析，支持后续安全验证与 Keep-Alive 判定。
+2. 将路径安全校验集中到 `RequestValidator`，统一处理 `..`、查询串、片段、头部体积上限与方法白名单。
+
+**为什么这么改**
+1. 安全验证必须建立在结构化请求数据上，仅有 path 不足以做方法、头部、体积判定。
+2. 验证逻辑从 `Connection` 业务路径剥离后，测试更独立，后续扩展（黑名单、速率限制）更容易。
+
+### 核心约束（补充）
+1. 保持“一个 fd 只属于一个 EventLoop”。
+2. ET + 非阻塞 I/O 读写到 `EAGAIN` 的约束不变。
+3. 所有请求必须先过 `RequestValidator` 再进入静态资源处理。
+4. `notes.txt` 仅做增量更新，不删除关键历史；状态纠偏通过“新增记录”完成。
+
+### 待办事项（根据 Claude 最新方向 + 当前实现状态）
+1. 将 `RequestValidator` 真正接入 `Connection` 请求处理主路径（当前主要是模块已实现，需完成调用链闭环）。
+2. 增加异常场景测试：非法 `Content-Length`、重复关键头、畸形请求行、HTTP/1.0/1.1 Keep-Alive 组合。
+3. 审核 `NormalizePath` 在目标文件不存在时的行为，必要时改为“词法规范化 + 根目录拼接校验”策略，避免依赖文件实际存在。
+4. 在 CI smoke 或 integration 中纳入 `test_request_validator`，保证安全逻辑回归可见。
+5. 完成阶段四剩余项：Keep-Alive 管理、条件请求（ETag/If-Modified-Since）并补测试。
+
+### 上下文断点（重启会话必看）
+**最后一条关键信息**：当前代码已进入 v7.4 安全验证落地，核心未闭环点是“`RequestValidator` 是否已在 `Connection` 主链路强制执行并覆盖异常路径测试”；未提交文件集中在 `HttpRequest` 与 `RequestValidator` 相关改动。
+
+### 会话截断强制更新模板（新增）
+当出现回复截断/上下文即将耗尽，立即追加以下模板内容到本文件：
+
+> 注意：当前上下文即将耗尽，我们需要进行强制更新并准备重置会话。请立即执行：
+> 1. 全面快照：写下当前最精确断点（正在调试的变量、尚未尝试方案、刚讨论的核心灵感）。
+> 2. 逻辑序列化：用最短路径记录推理链，确保下个会话可直接接手。
+> 3. 清理指令：总结完成后输出“存档已就绪”。
+
+**断点快照字段（发生切断后立即记录）**
+1. 调试变量：`method_`、`version_`、`headers_`、`content_length`、`headers_size`、`normalized_path`。
+2. 未尝试方案：词法规范化替代 `weakly_canonical`、请求验证前置拦截统一返回码、CI 分层验证。
+3. 核心灵感：把“协议解析”和“安全验证”拆成两个可独立测试的阶段，降低 Connection 复杂度。
+
+### Git Commit 后同步规则（新增）
+每完成一个 commit，按以下最小清单更新 `notes.txt`：
+1. 写入 commit hash + 一句话目标。
+2. 更新“已完成/正在进行”状态。
+3. 若存在未解风险，写入“待办事项”与“上下文断点”。
+4. 不覆盖旧记录，仅追加增量条目。
+
+### 本次增量记录
+- 2026-03-07：完成 notes.txt 审核与规范补齐；进度纠偏到“v7.3 已完成、v7.4 进行中”；新增截断强制更新模板、断点字段与 commit 同步清单。
+
+---
+
+## 2026-03-07 阶段四进展更新
+
+### 已完成（本会话）
+1. **RequestValidator 集成闭环**：
+   - 修复 `test_request_validator.cpp`，添加 `TestEdgeCases()` 调用，覆盖非法 Content-Length、重复关键头、HTTP/1.0/1.1 Keep-Alive 行为等异常场景
+   - 验证通过：所有 RequestValidator 测试通过（包括新增边缘情况测试）
+   - 将 RequestValidator 完整接入 `Connection` 请求处理主路径（`src/main.cpp`），使用配置化静态资源根目录（从 `ServerConfig` 获取）
+   - 冒烟测试通过：`test_request_validator`、`test_basic`、`test_timer`、`test_multithread_reactor`、`test_log` 全部成功
+
+2. **配置集成改进**：
+   - `src/main.cpp` 修改为使用 `ServerConfig::GetStaticOptions().root` 作为静态资源根目录，替代硬编码 `"./public"`
+   - 保持向后兼容：当无配置文件时创建默认 `ServerConfig` 实例，获取默认值 `"./public"`
+
+### 更新“已完成/正在进行”状态
+#### 已完成（新增）
+- 阶段四 v7.4：请求安全验证核心功能
+  - `RequestValidator` 模块实现与测试完善
+  - `HttpRequest` 增强（完整请求行+头部解析）
+  - 安全验证集成到 `Connection` 主路径（通过 `main.cpp` 回调）
+  - 配置化根目录支持
+
+#### 正在进行
+1. 阶段四 v7.4 剩余项：
+   - Keep-Alive 管理（`KeepAliveManager` 集成到 `Connection`）
+   - 条件请求支持（ETag/If-Modified-Since）
+   - 补充相关测试
+
+### 未提交改动文件（更新后）
+- `CMakeLists.txt`
+- `include/http_request.h`
+- `src/http_request.cpp`
+- `include/request_validator.h`
+- `src/request_validator.cpp`
+- `test/test_request_validator.cpp`
+- `src/main.cpp`
+
+### 上下文断点（当前状态）
+**最后一条关键信息**：RequestValidator 已完整集成并通过测试，安全验证在 Connection 主链路中强制执行。剩余工作为 Keep-Alive 管理与条件请求支持。所有未提交改动文件已就绪，等待 Git Commit。
+
+### Git Commit 准备
+等待用户批准后执行 Git Commit 操作。
