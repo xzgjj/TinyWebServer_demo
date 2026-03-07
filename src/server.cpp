@@ -46,7 +46,8 @@ Server::Server(const std::string& ip, int port)
     : main_loop_(std::make_unique<EventLoop>()),
       thread_pool_(std::make_unique<EventLoopThreadPool>(main_loop_.get())),
       listen_fd_(CreateListenSocket(static_cast<unsigned short>(port), 1024)),
-      config_(nullptr) {
+      config_(nullptr),
+      keep_alive_manager_(std::make_unique<tinywebserver::KeepAliveManager>()) {
 
     // 默认线程数
     thread_pool_->SetThreadNum(4);
@@ -58,7 +59,9 @@ Server::Server(const std::string& ip, int port)
 }
 
 Server::Server(const std::shared_ptr<tinywebserver::ServerConfig>& config)
-    : config_(config) {
+    : config_(config),
+      keep_alive_manager_(std::make_unique<tinywebserver::KeepAliveManager>(
+          std::chrono::seconds(config->GetLimitsOptions().keep_alive_timeout))) {
 
     if (!config) {
         LOG_ERROR("Invalid configuration provided");
@@ -132,7 +135,7 @@ void Server::HandleAccept(int listen_fd) {
         
         // 创建连接对象
         // 注意：连接归属于 io_loop，但目前我们在 MainLoop 线程中
-        auto conn = std::make_shared<Connection>(conn_fd, io_loop, config_);
+        auto conn = std::make_shared<Connection>(conn_fd, io_loop, config_, keep_alive_manager_.get());
         conn->SetMessageCallback(on_message_);
         conn->SetCloseCallback(std::bind(&Server::RemoveConnection, this, std::placeholders::_1));
 

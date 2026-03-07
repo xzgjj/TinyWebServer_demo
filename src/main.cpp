@@ -61,13 +61,15 @@ int main(int argc, char* argv[]) {
         config = std::make_shared<tinywebserver::ServerConfig>();
     }
 
-    // 确定静态资源根目录
+    // 确定静态资源根目录和 Keep-Alive 超时
     std::string static_root = "./public"; // 默认值
+    int keep_alive_timeout = 15; // 默认 15 秒
     if (config) {
         static_root = config->GetStaticOptions().root;
+        keep_alive_timeout = config->GetLimitsOptions().keep_alive_timeout;
     }
 
-    server->SetOnMessage([static_root](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
+    server->SetOnMessage([static_root, keep_alive_timeout](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
         auto parser = conn->GetHttpParser();
         auto& buffer = conn->GetInputBuffer();
 
@@ -79,6 +81,9 @@ int main(int argc, char* argv[]) {
             }
 
             if (parser->Parse(buffer)) {
+                // Keep-Alive 管理：通知连接开始处理请求
+                conn->OnRequestStart(parser->IsKeepAlive(), keep_alive_timeout);
+
                 // 请求安全验证
                 tinywebserver::RequestValidator validator(static_root);
                 auto validation_result = validator.ValidateRequest(*parser);
@@ -97,14 +102,14 @@ int main(int argc, char* argv[]) {
                     }
 
                     // 生成错误响应，使用错误码
-                    response.Init(static_root, "", false, error_code);
+                    response.Init(static_root, "", parser->IsKeepAlive(), error_code, parser.get());
                     response.MakeResponse();
 
                     LOG_WARN("Request validation failed: %s (code: %d)",
                              validation_result.error.ToString().c_str(), error_code);
                 } else {
                     // 验证成功，使用规范化路径
-                    response.Init(static_root, validation_result.normalized_path, false);
+                    response.Init(static_root, validation_result.normalized_path, parser->IsKeepAlive(), -1, parser.get());
                     response.MakeResponse();
                 }
 
@@ -123,6 +128,7 @@ int main(int argc, char* argv[]) {
 
                 int status_code = response.GetCode();
                 parser->Reset(); // 为下一次解析重置状态
+                conn->OnRequestComplete(); // Keep-Alive 管理：请求处理完成
 
                 // 如果出错，则优雅关闭写端
                 if (status_code >= 400) {

@@ -17,9 +17,12 @@
 #include "config/server_config.h"
 
 
-class HttpRequest; 
+class HttpRequest;
 class EventLoop;
 class StaticResource; // 确保 StaticResource 也能被识别
+namespace tinywebserver {
+    class KeepAliveManager;
+}
 
 enum class ConnState {
     kConnecting,      ///< 连接建立中 (SYN_SENT)
@@ -36,7 +39,9 @@ public:
     using MessageCallback = std::function<void(std::shared_ptr<Connection>, const std::string&)>;
     using CloseCallback = std::function<void(int)>;
 
-    Connection(int fd, EventLoop* loop, std::shared_ptr<tinywebserver::ServerConfig> config = nullptr);
+    Connection(int fd, EventLoop* loop,
+               std::shared_ptr<tinywebserver::ServerConfig> config = nullptr,
+               tinywebserver::KeepAliveManager* keep_alive_manager = nullptr);
     ~Connection();
 
     // 初始化连接，必须在 loop 线程调用
@@ -61,6 +66,12 @@ public:
 
     void SetMessageCallback(MessageCallback cb) { message_callback_ = std::move(cb); }
     void SetCloseCallback(CloseCallback cb) { close_callback_ = std::move(cb); }
+
+    // 【新增】Keep-Alive 管理
+    void UpdateKeepAliveState(bool keep_alive, int idle_timeout = 0);
+    void OnRequestStart(bool keep_alive, int idle_timeout = 0);
+    void OnRequestComplete();
+    bool ShouldKeepAlive() const;
 
     // HTTP 相关辅助
     std::string& GetInputBuffer() { return input_buffer_; }
@@ -118,12 +129,14 @@ private:
     // 【新增】统一关闭路径内部实现
     void CloseInLoop(const tinywebserver::Error& reason);
 
+
     // 读缓冲区：依然保持 string，处理 HTTP 文本协议头
     std::string input_buffer_;
     
     // 【修改】写缓冲区：升级为支持 Scatter/Gather 的链式缓冲
     BufferChain output_buffer_;
     std::shared_ptr<tinywebserver::ServerConfig> config_;
+    tinywebserver::KeepAliveManager* keep_alive_manager_;
 
     // 【新增】超时管理
     int read_timeout_seconds_;

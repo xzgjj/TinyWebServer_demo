@@ -12,6 +12,7 @@
 #include "reactor/socket_utils.h"
 #include "connection.h"
 #include "config/server_config.h"
+#include "http/keep_alive_manager.h"
 
 namespace tinywebserver {
 class ServerConfig;
@@ -27,8 +28,13 @@ public:
     void Run();
     
     // 设置消息回调
-    void SetOnMessage(Connection::MessageCallback cb) { 
-        on_message_ = std::move(cb); 
+    void SetOnMessage(Connection::MessageCallback cb) {
+        on_message_ = std::move(cb);
+    }
+
+    // 获取 Keep-Alive 管理器
+    tinywebserver::KeepAliveManager* GetKeepAliveManager() const {
+        return keep_alive_manager_.get();
     }
 
     void SetupConnectionInLoop(std::shared_ptr<Connection> conn);
@@ -48,6 +54,7 @@ private:
     std::mutex conn_mutex_;
     std::unordered_map<int, std::shared_ptr<Connection>> connections_;
     std::shared_ptr<tinywebserver::ServerConfig> config_;
+    std::unique_ptr<tinywebserver::KeepAliveManager> keep_alive_manager_;
 };
 
 
