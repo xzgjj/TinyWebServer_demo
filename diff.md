@@ -341,3 +341,96 @@
 6. **向后兼容**：API无破坏性变更，新增功能通过扩展接口提供
 
 > **注意**：每次重要修改后更新此文件，保持增量记录，不删除历史记录。
+
+---
+
+## 2026-03-07 阶段四 (v7.4) 安全验证集成完成
+
+### 涉及文件
+1. `test/test_request_validator.cpp` - 修复测试调用链，添加 TestEdgeCases() 调用
+2. `src/main.cpp` - 集成 RequestValidator 到 Connection 主路径，支持配置化根目录
+3. `include/http_request.h` - 增强 HTTP 请求解析（已在前续修改中）
+4. `src/http_request.cpp` - 增强 HTTP 请求解析（已在前续修改中）
+5. `include/request_validator.h` - RequestValidator 类定义（已在前续修改中）
+6. `src/request_validator.cpp` - RequestValidator 实现（已在前续修改中）
+7. `CMakeLists.txt` - 测试目标集成（已在前续修改中）
+
+### 核心 Diff 摘要
+#### 1. 测试完善：添加边缘情况测试调用
+```diff
+int main() {
+    std::cout << "Running RequestValidator tests..." << std::endl;
+
+    try {
+        TestPathNormalization();
+        TestMethodValidation();
+        TestRequestValidation();
+        TestHeaderValidation();
++       TestEdgeCases();
+
+        std::cout << "\n✅ All RequestValidator tests passed!" << std::endl;
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "❌ Test failed: " << e.what() << std::endl;
+        return 1;
+    }
+}
+```
+
+#### 2. 主程序集成：配置化 RequestValidator
+```diff
++    // 确定静态资源根目录
++    std::string static_root = "./public"; // 默认值
++    if (config) {
++        static_root = config->GetStaticOptions().root;
++    }
++
+-    server->SetOnMessage([](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
++    server->SetOnMessage([static_root](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
+         // ... 请求处理逻辑
+
+-        tinywebserver::RequestValidator validator("./public");
++        tinywebserver::RequestValidator validator(static_root);
+         auto validation_result = validator.ValidateRequest(*parser);
+
+         HttpResponse response;
+         if (!validation_result.valid) {
+             // ... 错误处理
+-            response.Init("./public", "", false, error_code);
++            response.Init(static_root, "", false, error_code);
+         } else {
+-            response.Init("./public", validation_result.normalized_path, false);
++            response.Init(static_root, validation_result.normalized_path, false);
+         }
+     });
+```
+
+#### 3. 配置变量作用域提升
+```diff
+    std::unique_ptr<Server> server;
++    std::shared_ptr<tinywebserver::ServerConfig> config = nullptr;
+
+    if (!config_file.empty()) {
+-        auto config = tinywebserver::ServerConfig::LoadFromFile(config_file);
++        config = tinywebserver::ServerConfig::LoadFromFile(config_file);
+        // ... 配置加载
+    } else {
+        // 默认配置
+        server = std::make_unique<Server>("0.0.0.0", 8080);
++        // 创建默认配置对象以获取默认值
++        config = std::make_shared<tinywebserver::ServerConfig>();
+    }
+```
+
+### 修改意图
+1. **测试完整性**：确保 `TestEdgeCases()` 被调用，覆盖非法 Content-Length、重复关键头、HTTP/1.0/1.1 Keep-Alive 行为等边缘场景
+2. **配置驱动**：使用 `ServerConfig` 提供的静态资源根目录，替代硬编码路径，支持配置文件自定义
+3. **集成闭环**：将 `RequestValidator` 完整集成到 `Connection` 请求处理主路径，验证失败时返回适当的 HTTP 错误码（400/403/405/413）
+4. **向后兼容**：保持默认行为不变（`"./public"`），当无配置文件时使用默认 `ServerConfig` 实例
+5. **测试验证**：所有 RequestValidator 测试通过，冒烟测试（test_basic、test_timer、test_multithread_reactor、test_log）验证无回归
+
+### 验证状态
+- ✅ `test_request_validator` 通过（包含新增边缘情况测试）
+- ✅ CI 冒烟测试集通过
+- ✅ 编译通过（GCC 11.4.0，C++17，ASan enabled）
+- ✅ 配置化根目录功能正常（从配置文件读取或使用默认值）
