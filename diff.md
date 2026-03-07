@@ -544,3 +544,48 @@ void KeepAliveManager::OnRequestStart(int fd, bool keep_alive, int idle_timeout)
 - ✅ 所有新增测试集成到构建系统，可独立运行
 
 > **注意**：阶段四(v7.4)全部功能完成，HTTP/1.1 协议完整性目标达成。
+
+---
+
+## 2026-03-07 阶段五 (v7.5) 基准测试框架编译修复
+
+### 涉及文件
+1. `benchmark/src/benchmark_memory.cpp` - 添加缺失头文件 `<dirent.h>`，移除无效 `start_time_` 初始化
+2. `benchmark/src/benchmark_concurrent.cpp` - 添加缺失头文件 `<fcntl.h>` 和 `<poll.h>`，修复时间类型不匹配
+
+### 核心 Diff 摘要
+#### 1. 头文件添加
+```diff
++#include <dirent.h>
+ // benchmark_memory.cpp: 支持 DIR, opendir, readdir, closedir
++#include <fcntl.h>
++#include <poll.h>
+ // benchmark_concurrent.cpp: 支持 fcntl, F_GETFL, F_SETFL, O_NONBLOCK, pollfd, POLLOUT, poll
+```
+
+#### 2. 构造函数修复
+```diff
+-    Impl() : running_(false), start_time_(), peak_rss_kb_(0), total_cpu_time_ms_(0) {
++    Impl() : running_(false), peak_rss_kb_(0), total_cpu_time_ms_(0) {
+```
+
+#### 3. 时间类型修复
+```diff
+-        result.start_time = std::chrono::steady_clock::now();
++        result.start_time = std::chrono::system_clock::now();
+```
+
+### 修改意图
+1. **解决编译错误**：缺失的系统头文件导致 `DIR`, `fcntl`, `poll` 相关函数未定义
+2. **类型一致性**：`BenchmarkResult::start_time` 使用 `system_clock::time_point`，与 `steady_clock::now()` 不匹配
+3. **无效初始化**：`start_time_` 字段未在 `SystemResourceMonitor::Impl` 类中声明，移除冗余初始化
+4. **保持兼容性**：所有修改不影响接口，仅修复内部实现错误
+
+### 验证状态
+- ✅ `benchmark_runner` 编译成功，无错误
+- ✅ 帮助命令 `./benchmark_runner help` 正常显示
+- ✅ 列表命令 `./benchmark_runner list` 显示四种测试类型
+- ✅ 冒烟测试通过（test_timer, test_basic, test_multithread_reactor, test_log）
+- ✅ 集成测试通过（除 test_main 外，14/15 通过，与基准测试无关）
+
+> **注意**：阶段五(v7.5)基准测试框架核心架构已实现并通过编译验证，支持四种测试类型。后续需完善服务器集成以支持实际性能测试运行。

@@ -262,29 +262,207 @@ def extract_rich_info(name, stdout, stderr, is_passed):
 #     ... 写入表格 ...
 
 
+# --- 基准测试功能 ---
+def run_benchmark(benchmark_type, config_file=None, output_dir=None, baseline_dir=None,
+                  duration=None, connections=None, host=None, port=None):
+    """运行基准测试"""
+    if not BUILD_DIR.exists():
+        print(">> 错误: 构建目录不存在，请先运行 'python3 tools.py build'")
+        return False
+
+    benchmark_exe = BUILD_DIR / "benchmark_runner"
+    if not benchmark_exe.exists():
+        print(">> 错误: 基准测试运行器未找到，请确保已启用 BUILD_BENCHMARKS 并重新构建")
+        print(">> 提示: 运行 'python3 tools.py build -clean' 重新构建")
+        return False
+
+    # 构建命令行参数
+    cmd_args = [str(benchmark_exe), "run", "--type", benchmark_type]
+
+    if config_file:
+        cmd_args.extend(["--config", config_file])
+    if output_dir:
+        cmd_args.extend(["--output", output_dir])
+    if baseline_dir:
+        cmd_args.extend(["--baseline", baseline_dir])
+    if duration:
+        cmd_args.extend(["--duration", str(duration)])
+    if connections:
+        cmd_args.extend(["--connections", str(connections)])
+    if host:
+        cmd_args.extend(["--host", host])
+    if port:
+        cmd_args.extend(["--port", str(port)])
+
+    print(f">> 运行基准测试: {' '.join(cmd_args)}")
+
+    try:
+        # 设置环境变量以启用ASan符号化（如果适用）
+        env = os.environ.copy()
+        if "ASAN_OPTIONS" not in env:
+            env["ASAN_OPTIONS"] = "symbolize=1:detect_leaks=1"
+
+        result = subprocess.run(
+            cmd_args,
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10分钟超时
+            env=env,
+            cwd=str(ROOT_DIR)
+        )
+
+        print(result.stdout)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        print(">> 错误: 基准测试超时（超过10分钟）")
+        return False
+    except Exception as e:
+        print(f">> 错误: 运行基准测试时发生异常: {e}")
+        return False
+
+def list_benchmark_types():
+    """列出可用的基准测试类型"""
+    benchmark_exe = BUILD_DIR / "benchmark_runner"
+    if not benchmark_exe.exists():
+        print(">> 错误: 基准测试运行器未找到")
+        return False
+
+    try:
+        result = subprocess.run(
+            [str(benchmark_exe), "list"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        print(result.stdout)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+
+        return result.returncode == 0
+    except Exception as e:
+        print(f">> 错误: 获取基准测试类型列表时发生异常: {e}")
+        return False
+
+def compare_benchmark_results(baseline_dir, current_dir):
+    """对比基准测试结果"""
+    benchmark_exe = BUILD_DIR / "benchmark_runner"
+    if not benchmark_exe.exists():
+        print(">> 错误: 基准测试运行器未找到")
+        return False
+
+    try:
+        result = subprocess.run(
+            [str(benchmark_exe), "compare", "--baseline", baseline_dir, "--current", current_dir],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        print(result.stdout)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+
+        return result.returncode == 0
+    except Exception as e:
+        print(f">> 错误: 对比基准测试结果时发生异常: {e}")
+        return False
+
+def create_baseline():
+    """创建性能基线"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    baseline_dir = ROOT_DIR / "benchmark_results" / "baseline"
+
+    # 如果已存在基线，先备份
+    if baseline_dir.exists():
+        backup_dir = ROOT_DIR / "benchmark_results" / f"baseline_backup_{timestamp}"
+        import shutil
+        shutil.copytree(baseline_dir, backup_dir)
+        print(f">> 已备份现有基线到: {backup_dir}")
+
+    # 运行全套基准测试
+    print(">> 开始创建性能基线...")
+
+    configs = [
+        ("qps", "configs/benchmark/qps_config.json"),
+        ("latency", "configs/benchmark/latency_config.json"),
+        ("memory", "configs/benchmark/memory_config.json"),
+        ("concurrent", "configs/benchmark/concurrent_config.json")
+    ]
+
+    all_success = True
+    for benchmark_type, config_file in configs:
+        print(f"\n>> 运行 {benchmark_type} 基准测试...")
+        success = run_benchmark(
+            benchmark_type=benchmark_type,
+            config_file=config_file,
+            output_dir=str(baseline_dir / benchmark_type)
+        )
+        if not success:
+            print(f">> 警告: {benchmark_type} 基准测试失败")
+            all_success = False
+
+    if all_success:
+        print(f"\n>> 性能基线创建完成: {baseline_dir}")
+        print(">> 基线包含: qps, latency, memory, concurrent 测试结果")
+    else:
+        print("\n>> 警告: 部分基准测试失败，基线可能不完整")
+
+    return all_success
+
 def main():
     parser = argparse.ArgumentParser(description="TinyWebServer 辅助工具 - 性能审计版")
     subparsers = parser.add_subparsers(dest="command")
-    
+
     add_m = lambda p: p.add_argument("-m", "--mode", choices=["debug", "perf"], default="debug", help="构建模式")
-    
+
     all_p = subparsers.add_parser("all", help="全流程：清理+构建+测试")
     add_m(all_p)
-    
+
     build_p = subparsers.add_parser("build", help="仅执行构建")
     add_m(build_p)
     build_p.add_argument("-clean", action="store_true", help="构建前清理")
-    
+
     test_p = subparsers.add_parser("test", help="运行测试并生成审计报告")
     test_p.add_argument("-only", nargs="+", help="指定运行的测试项名称")
-    
+
     debug_p = subparsers.add_parser("debug", help="使用GDB调试特定目标")
     debug_p.add_argument("-target", required=True, help="测试目标名称")
-    
-    subparsers.add_parser("clean", help="仅清理构建目录")
+
+    clean_p = subparsers.add_parser("clean", help="仅清理构建目录")
+
+    # 基准测试命令
+    benchmark_p = subparsers.add_parser("benchmark", help="运行性能基准测试")
+    benchmark_subparsers = benchmark_p.add_subparsers(dest="benchmark_command")
+
+    # benchmark run
+    run_p = benchmark_subparsers.add_parser("run", help="运行基准测试")
+    run_p.add_argument("--type", required=True, choices=["qps", "latency", "memory", "concurrent"],
+                      help="基准测试类型")
+    run_p.add_argument("--config", help="配置文件路径")
+    run_p.add_argument("--output", help="输出目录")
+    run_p.add_argument("--baseline", help="基线结果目录，用于对比")
+    run_p.add_argument("--duration", type=float, help="测试持续时间（秒）")
+    run_p.add_argument("--connections", type=int, help="并发连接数")
+    run_p.add_argument("--host", help="服务器地址")
+    run_p.add_argument("--port", type=int, help="服务器端口")
+
+    # benchmark list
+    benchmark_subparsers.add_parser("list", help="列出可用的基准测试类型")
+
+    # benchmark compare
+    compare_p = benchmark_subparsers.add_parser("compare", help="对比基准测试结果")
+    compare_p.add_argument("--baseline", required=True, help="基线结果目录")
+    compare_p.add_argument("--current", required=True, help="当前结果目录")
+
+    # benchmark baseline
+    benchmark_subparsers.add_parser("baseline", help="创建性能基线（运行全套基准测试）")
 
     args = parser.parse_args()
-    
+
     if args.command == "all":
         clean()
         mode = "Debug" if args.mode == "debug" else "Release"
@@ -299,6 +477,32 @@ def main():
         debug(args.target)
     elif args.command == "clean":
         clean()
+    elif args.command == "benchmark":
+        if args.benchmark_command == "run":
+            success = run_benchmark(
+                benchmark_type=args.type,
+                config_file=args.config,
+                output_dir=args.output,
+                baseline_dir=args.baseline,
+                duration=args.duration,
+                connections=args.connections,
+                host=args.host,
+                port=args.port
+            )
+            if not success:
+                sys.exit(1)
+        elif args.benchmark_command == "list":
+            list_benchmark_types()
+        elif args.benchmark_command == "compare":
+            success = compare_benchmark_results(args.baseline, args.current)
+            if not success:
+                sys.exit(1)
+        elif args.benchmark_command == "baseline":
+            success = create_baseline()
+            if not success:
+                sys.exit(1)
+        else:
+            benchmark_p.print_help()
     else:
         parser.print_help()
 

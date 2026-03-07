@@ -1,0 +1,20 @@
+{
+  "name": "concurrent_benchmark",
+  "description": "并发连接能力基准测试配置",
+  "duration_seconds": 180,
+  "concurrent_connections": 1000,
+  "target_qps": 0,
+  "server_host": "127.0.0.1",
+  "server_port": 8080,
+  "request_path": "/index.html",
+  "request_method": "GET",
+  "request_body": "",
+  "keep_alive": false,
+  "collect_time_series": true,
+  "custom_params": {
+    "max_connections_test_batch_size": "100",
+    "connection_rate_test_duration": "30",
+    "stability_test_duration": "60",
+    "expected_max_connections": "10000"
+  }
+}

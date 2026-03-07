@@ -26,3 +26,6 @@ notes.txt
 implementation_plan.md
 AGENT_EXECUTION_PROTOCOL.md
 .claude/
+
+# 性能基准测试结果（不推送到远程仓库）
+benchmark_results/

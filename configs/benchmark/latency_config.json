@@ -1,0 +1,19 @@
+{
+  "name": "latency_benchmark",
+  "description": "延迟分布基准测试配置",
+  "duration_seconds": 60,
+  "concurrent_connections": 50,
+  "target_qps": 1000,
+  "server_host": "127.0.0.1",
+  "server_port": 8080,
+  "request_path": "/index.html",
+  "request_method": "GET",
+  "request_body": "",
+  "keep_alive": true,
+  "collect_time_series": true,
+  "custom_params": {
+    "target_latency_p99_ms": "100",
+    "measurement_precision": "microsecond",
+    "percentiles_to_calculate": "50,90,95,99,99.9"
+  }
+}

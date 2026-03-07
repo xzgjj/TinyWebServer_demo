@@ -1,0 +1,20 @@
+{
+  "name": "memory_benchmark",
+  "description": "内存使用基准测试配置",
+  "duration_seconds": 120,
+  "concurrent_connections": 10,
+  "target_qps": 100,
+  "server_host": "127.0.0.1",
+  "server_port": 8080,
+  "request_path": "/index.html",
+  "request_method": "GET",
+  "request_body": "",
+  "keep_alive": true,
+  "collect_time_series": true,
+  "custom_params": {
+    "baseline_measurement_duration": "10",
+    "load_test_duration": "30",
+    "recovery_measurement_duration": "30",
+    "memory_leak_threshold_kb": "1024"
+  }
+}

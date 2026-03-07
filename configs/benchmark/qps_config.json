@@ -1,0 +1,19 @@
+{
+  "name": "qps_benchmark",
+  "description": "QPS (每秒查询数) 基准测试配置",
+  "duration_seconds": 30,
+  "concurrent_connections": 100,
+  "target_qps": 0,
+  "server_host": "127.0.0.1",
+  "server_port": 8080,
+  "request_path": "/index.html",
+  "request_method": "GET",
+  "request_body": "",
+  "keep_alive": true,
+  "collect_time_series": false,
+  "custom_params": {
+    "warmup_duration": "5",
+    "test_scenario": "steady_state",
+    "expected_min_qps": "1000"
+  }
+}

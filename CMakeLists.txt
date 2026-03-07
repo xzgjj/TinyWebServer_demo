@@ -251,6 +251,69 @@ if(BUILD_TESTING)
     endforeach()
 endif()
 
+# --- 5. 性能基准测试框架 ---
+option(BUILD_BENCHMARKS "Build performance benchmarks" ON)
+
+if(BUILD_BENCHMARKS)
+    message(STATUS "")
+    message(STATUS "=========================================")
+    message(STATUS "基准测试框架加载")
+    message(STATUS "=========================================")
+
+    # 基准测试源文件
+    set(BENCHMARK_SOURCES_LIST
+        benchmark/src/benchmark_base.cpp
+        benchmark/src/benchmark_qps.cpp
+        benchmark/src/benchmark_latency.cpp
+        benchmark/src/benchmark_memory.cpp
+        benchmark/src/benchmark_concurrent.cpp
+        benchmark/src/benchmark_factory.cpp
+    )
+
+    # 检查每个源文件是否存在
+    set(VALID_BENCHMARK_SOURCES "")
+    foreach(src ${BENCHMARK_SOURCES_LIST})
+        if(EXISTS ${PROJECT_SOURCE_DIR}/${src})
+            list(APPEND VALID_BENCHMARK_SOURCES ${PROJECT_SOURCE_DIR}/${src})
+            message(STATUS "✓ 确认基准测试源文件: ${src}")
+        else()
+            message(WARNING "⚠️ 缺失基准测试源文件: ${src}")
+        endif()
+    endforeach()
+
+    # 基准测试运行器
+    if(EXISTS ${PROJECT_SOURCE_DIR}/benchmark/src/benchmark_runner.cpp)
+        add_executable(benchmark_runner benchmark/src/benchmark_runner.cpp ${VALID_BENCHMARK_SOURCES})
+        target_link_libraries(benchmark_runner PRIVATE webserver_core project_configs nlohmann_json::nlohmann_json)
+        message(STATUS "✅ 基准测试运行器 benchmark_runner 配置完成")
+
+        # 添加到测试目标列表（便于统一管理）
+        list(APPEND ALL_TEST_TARGETS "benchmark_runner")
+    else()
+        message(WARNING "⚠️ 未找到基准测试运行器: benchmark/src/benchmark_runner.cpp")
+    endif()
+
+    # 示例配置文件复制（构建时）
+    add_custom_target(copy_benchmark_configs ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/configs/benchmark
+        COMMAND ${CMAKE_COMMAND} -E copy
+            ${PROJECT_SOURCE_DIR}/configs/benchmark/qps_config.json
+            ${CMAKE_BINARY_DIR}/configs/benchmark/
+        COMMAND ${CMAKE_COMMAND} -E copy
+            ${PROJECT_SOURCE_DIR}/configs/benchmark/latency_config.json
+            ${CMAKE_BINARY_DIR}/configs/benchmark/
+        COMMAND ${CMAKE_COMMAND} -E copy
+            ${PROJECT_SOURCE_DIR}/configs/benchmark/memory_config.json
+            ${CMAKE_BINARY_DIR}/configs/benchmark/
+        COMMAND ${CMAKE_COMMAND} -E copy
+            ${PROJECT_SOURCE_DIR}/configs/benchmark/concurrent_config.json
+            ${CMAKE_BINARY_DIR}/configs/benchmark/
+        COMMENT "复制基准测试配置文件到构建目录"
+    )
+
+    message(STATUS "✅ 基准测试框架配置完成")
+endif()
+
 # --- 最终提示 ---
 message(STATUS "")
 message(STATUS "=========================================")
@@ -262,5 +325,10 @@ if(BUILD_TESTING)
     message(STATUS "✅ 测试用例总数: ${ALL_TEST_TARGETS}")
 else()
     message(STATUS "✅ BUILD_TESTING=OFF，跳过测试目标")
+endif()
+if(BUILD_BENCHMARKS)
+    message(STATUS "✅ 基准测试框架: ENABLED")
+else()
+    message(STATUS "✅ 基准测试框架: DISABLED")
 endif()
 message(STATUS "=========================================")
