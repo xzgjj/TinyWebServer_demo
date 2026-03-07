@@ -154,20 +154,14 @@
 1. 阶段一 v7.1：Connection 状态机 + 资源边界控制（commit: `242e552`）。
 2. 阶段二 v7.2：统一错误处理 + 定时器管理（commit: `1d946a8`）。
 3. 阶段三 v7.3：JSON 配置系统 + 指标系统 + 结构化日志（commit: `fc2c227`）。
+4. 阶段四 v7.4：请求安全验证核心功能（commit: `e87074a`）。
 
 #### 正在进行
-1. 阶段四 v7.4（请求安全验证 + HTTP/1.1 完整性）已开始：
-   - 新增 `RequestValidator`（路径规范化、方法白名单、头部与请求体大小限制）。
-   - `HttpRequest` 增强为可获取 `method/version/headers/content-length/keep-alive`。
-   - 新增 `test_request_validator` 并接入 CMake 测试目标。
-   - 验证状态：当前会话环境缺少可用 Windows C++ toolchain（`nmake`/编译器缺失），暂未完成本地编译跑测确认。
-2. 当前未提交改动文件：
-   - `CMakeLists.txt`
-   - `include/http_request.h`
-   - `src/http_request.cpp`
-   - `include/request_validator.h`
-   - `src/request_validator.cpp`
-   - `test/test_request_validator.cpp`
+1. 阶段四 v7.4 剩余项（HTTP/1.1 完整性）：
+   - Keep-Alive 管理（`KeepAliveManager` 集成到 `Connection`）
+   - 条件请求支持（ETag/If-Modified-Since）
+   - 补充相关测试
+   - 验证状态：基础框架已就绪（include/http/, src/http/），需完成集成与测试
 
 ### 关键决策（本轮）
 **刚解决的复杂逻辑**
@@ -258,5 +252,9 @@
 ### 上下文断点（当前状态）
 **最后一条关键信息**：RequestValidator 已完整集成并通过测试，安全验证在 Connection 主链路中强制执行。剩余工作为 Keep-Alive 管理与条件请求支持。所有未提交改动文件已就绪，等待 Git Commit。
 
-### Git Commit 准备
-等待用户批准后执行 Git Commit 操作。
+### Git Commit 记录
+- 2026-03-07 commit `e87074a`: 完成 RequestValidator 集成与配置支持
+  - 测试完善：添加 TestEdgeCases() 调用
+  - 主程序集成：使用配置化根目录替代硬编码路径
+  - 文件添加：新增 include/http/, include/http2/, src/http/, src/http2/, request_validator 等模块
+  - 文档更新：同步 notes.txt 与 diff.md
