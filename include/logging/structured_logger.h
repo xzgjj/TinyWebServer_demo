@@ -124,13 +124,13 @@ void InitStructuredLoggerFromConfig(const std::shared_ptr<ServerConfig>& config)
 /**
  * @brief 结构化日志宏（基础版本）
  */
-#define LOG_STRUCTURED(level, ...) \
+#define LOG_STRUCTURED(lvl, ...) \
     do { \
-        if (auto* manager = &StructuredLogManager::GetInstance(); \
+        if (auto* manager = &::tinywebserver::StructuredLogManager::GetInstance(); \
             manager->IsInitialized()) { \
-            StructuredLogEntry entry; \
+            ::tinywebserver::StructuredLogEntry entry; \
             entry.timestamp = std::chrono::system_clock::now(); \
-            entry.level = (level); \
+            entry.level = static_cast<decltype(entry.level)>(lvl); \
             entry.file = __FILE__; \
             entry.line = __LINE__; \
             entry.function = __func__; \
@@ -145,13 +145,13 @@ void InitStructuredLoggerFromConfig(const std::shared_ptr<ServerConfig>& config)
 /**
  * @brief 结构化日志宏（带请求上下文）
  */
-#define LOG_STRUCTURED_CTX(level, request_context, ...) \
+#define LOG_STRUCTURED_CTX(lvl, request_context, ...) \
     do { \
-        if (auto* manager = &tinywebserver::StructuredLogManager::GetInstance(); \
+        if (auto* manager = &::tinywebserver::StructuredLogManager::GetInstance(); \
             manager->IsInitialized()) { \
-            tinywebserver::StructuredLogEntry entry; \
+            ::tinywebserver::StructuredLogEntry entry; \
             entry.timestamp = std::chrono::system_clock::now(); \
-            entry.level = (level); \
+            entry.level = static_cast<decltype(entry.level)>(lvl); \
             entry.file = __FILE__; \
             entry.line = __LINE__; \
             entry.function = __func__; \
@@ -170,11 +170,11 @@ void InitStructuredLoggerFromConfig(const std::shared_ptr<ServerConfig>& config)
     } while(0)
 
 // 便捷宏
-#define LOG_S_DEBUG(...) LOG_STRUCTURED(tinywebserver::StructuredLogLevel::DEBUG, __VA_ARGS__)
-#define LOG_S_INFO(...)  LOG_STRUCTURED(tinywebserver::StructuredLogLevel::INFO, __VA_ARGS__)
-#define LOG_S_WARN(...)  LOG_STRUCTURED(tinywebserver::StructuredLogLevel::WARN, __VA_ARGS__)
-#define LOG_S_ERROR(...) LOG_STRUCTURED(tinywebserver::StructuredLogLevel::ERROR, __VA_ARGS__)
-#define LOG_S_FATAL(...) LOG_STRUCTURED(tinywebserver::StructuredLogLevel::FATAL, __VA_ARGS__)
+#define LOG_S_DEBUG(...) LOG_STRUCTURED(::tinywebserver::StructuredLogLevel::DEBUG, __VA_ARGS__)
+#define LOG_S_INFO(...)  LOG_STRUCTURED(::tinywebserver::StructuredLogLevel::INFO, __VA_ARGS__)
+#define LOG_S_WARN(...)  LOG_STRUCTURED(::tinywebserver::StructuredLogLevel::WARN, __VA_ARGS__)
+#define LOG_S_ERROR(...) LOG_STRUCTURED(::tinywebserver::StructuredLogLevel::ERROR, __VA_ARGS__)
+#define LOG_S_FATAL(...) LOG_STRUCTURED(::tinywebserver::StructuredLogLevel::FATAL, __VA_ARGS__)
 
 // 请求上下文结构体
 struct RequestContext {

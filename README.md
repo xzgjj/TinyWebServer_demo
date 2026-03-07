@@ -360,6 +360,9 @@ Connection 不再接受新的数据
 
 ### 调试与运行
 
+冒烟测试 (smoke)  
+集成测试   
+
 bash
 mkdir -p build
 cd build
