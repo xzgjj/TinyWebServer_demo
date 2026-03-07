@@ -24,7 +24,7 @@
     "flush_interval": 3
   },
   "static": {
-    "root": "./www",
+    "root": "./public",
     "cache_size": 100,
     "cache_ttl": 300
   },

@@ -29,7 +29,7 @@ TinyWebServer 使用 JSON 格式的配置文件，支持以下配置节：
 - `flush_interval`: 日志刷新间隔，单位秒 (默认: 3)
 
 ### 4. 静态资源 (`static`)
-- `root`: 静态资源根目录 (默认: "./www")
+- `root`: 静态资源根目录 (默认: "./public")
 - `cache_size`: 文件缓存条目数 (默认: 100)
 - `cache_ttl`: 缓存生存时间，单位秒 (默认: 300)
 
