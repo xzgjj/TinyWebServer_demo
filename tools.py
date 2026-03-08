@@ -205,9 +205,24 @@ def debug(target):
         print(f"[错误] 未找到可调试目标: {target}")
 
 def clean():
-    if BUILD_DIR.exists():
-        print(f">> 清理构建目录: {BUILD_DIR}")
-        shutil.rmtree(BUILD_DIR)
+    # 清理所有构建目录（在.gitignore中定义的临时构建目录）
+    build_dirs = [
+        ROOT_DIR / "build",
+        ROOT_DIR / "build_temp",
+        ROOT_DIR / "build_temp_check"
+    ]
+
+    cleaned = []
+    for build_dir in build_dirs:
+        if build_dir.exists():
+            print(f">> 清理构建目录: {build_dir}")
+            shutil.rmtree(build_dir)
+            cleaned.append(build_dir.name)
+
+    if not cleaned:
+        print(">> 没有需要清理的构建目录")
+    else:
+        print(f">> 已清理的目录: {', '.join(cleaned)}")
 
 # tools.py 优化片段
 
