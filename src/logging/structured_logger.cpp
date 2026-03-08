@@ -1,4 +1,6 @@
+#ifndef _WIN32
 #define _POSIX_C_SOURCE 200112L  // 启用 POSIX 扩展（localtime_r/gmtime_r）
+#endif
 #include "logging/structured_logger.h"
 #include "async_Logger.h"
 #include "config/server_config.h"
@@ -20,7 +22,11 @@ std::string StructuredLogEntry::ToText() const {
     // 时间戳
     auto time_t = std::chrono::system_clock::to_time_t(timestamp);
     std::tm tm_buf;
+#ifdef _WIN32
+    if (localtime_s(&tm_buf, &time_t) == 0) {
+#else
     if (localtime_r(&time_t, &tm_buf) != nullptr) {
+#endif
         oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S");
     } else {
         oss << "1970-01-01 00:00:00"; // 错误回退
@@ -68,7 +74,11 @@ std::string StructuredLogEntry::ToJson() const {
     // 时间戳（ISO 8601格式）
     auto time_t = std::chrono::system_clock::to_time_t(timestamp);
     std::tm tm_buf;
+#ifdef _WIN32
+    if (gmtime_s(&tm_buf, &time_t) == 0) {
+#else
     if (gmtime_r(&time_t, &tm_buf) != nullptr) {
+#endif
         oss << "\"timestamp\": \"" << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%SZ") << "\", ";
     } else {
         oss << "\"timestamp\": \"1970-01-01T00:00:00Z\", "; // 错误回退
