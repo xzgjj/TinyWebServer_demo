@@ -18,7 +18,10 @@
 // ... 原有代码保持不变 ...
 int CreateListenSocket(unsigned short port, int backlog) {
     int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if (fd < 0) return -1;
+    if (fd < 0) {
+        LOG_ERROR("CreateListenSocket: socket() failed: %s (errno=%d)", strerror(errno), errno);
+        return -1;
+    }
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -31,13 +34,17 @@ int CreateListenSocket(unsigned short port, int backlog) {
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        LOG_ERROR("CreateListenSocket: bind() failed on port %d: %s (errno=%d)",
+                  port, strerror(errno), errno);
         close(fd);
         return -1;
     }
     if (listen(fd, backlog) < 0) {
+        LOG_ERROR("CreateListenSocket: listen() failed: %s (errno=%d)", strerror(errno), errno);
         close(fd);
         return -1;
     }
+    LOG_INFO("CreateListenSocket: successfully created listen socket on port %d, fd=%d", port, fd);
     return fd;
 }
 

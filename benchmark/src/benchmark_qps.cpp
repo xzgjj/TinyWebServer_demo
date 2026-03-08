@@ -326,6 +326,7 @@ public:
                 }
             });
             server_thread = std::thread([&server]() {
+                server->Start();
                 server->Run();
             });
 
@@ -563,8 +564,10 @@ public:
 
     inline bool RunMinimalTest(const BenchmarkConfig& config) {
         LOG_INFO("=== 开始最小测试验证 ===");
-        LOG_INFO("服务器: %s:%d, 路径: %s",
-                config.server_host.c_str(), config.server_port, config.request_path.c_str());
+        // 使用备用端口8081，避免与可能存在的其他服务器冲突
+        int test_port = 8081;
+        LOG_INFO("服务器: %s:%d (使用端口 %d 避免冲突), 路径: %s",
+                config.server_host.c_str(), config.server_port, test_port, config.request_path.c_str());
 
         // 确保public目录存在
         system("mkdir -p public");
@@ -577,7 +580,7 @@ public:
         bool test_success = false;
 
         try {
-            server = std::make_unique<Server>(config.server_host, config.server_port, PluginManager::GetInstance());
+            server = std::make_unique<Server>(config.server_host, test_port, PluginManager::GetInstance());
 
             // 设置消息处理回调（使用与main.cpp相同的逻辑）
             server->SetOnMessage([this](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
@@ -620,6 +623,7 @@ public:
             });
 
             server_thread = std::thread([&server]() {
+                server->Start();
                 server->Run();
             });
 
@@ -628,9 +632,9 @@ public:
             LOG_INFO("最小测试: 服务器已启动");
 
             // 发送测试请求
-            HttpClient test_client(config.server_host, config.server_port, false);
+            HttpClient test_client(config.server_host, test_port, false);
             LOG_INFO("最小测试: 发送测试请求到 %s:%d%s",
-                    config.server_host.c_str(), config.server_port, config.request_path.c_str());
+                    config.server_host.c_str(), test_port, config.request_path.c_str());
 
             auto test_result = test_client.SendRequest("GET", "/index.html", "");
 
