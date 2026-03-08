@@ -641,7 +641,7 @@ python3 tools.py benchmark baseline
   - 提交信息：`feat(v7.5): fix benchmark minimal test validation and port conflicts`
 
 #### Git Commit 记录
-- 2026-03-08 commit `71b55ab`: 扩展tools.py清理功能以包含所有构建目录
+- 2026-03-08 commit `85ab769`: 扩展tools.py清理功能以包含所有构建目录
   - 扩展clean()函数清理build_temp/和build_temp_check/目录
   - 保持向后兼容：仍然清理原有的build/目录
   - 改进用户反馈：显示已清理的目录列表
