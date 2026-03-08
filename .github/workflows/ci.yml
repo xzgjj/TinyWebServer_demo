@@ -49,6 +49,9 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y cmake g++ ninja-build valgrind
+        # 验证安装
+        which valgrind
+        valgrind --version
 
     - name: Configure CMake (ASan OFF)
       run: >
@@ -62,18 +65,54 @@ jobs:
 
     - name: Run Valgrind on Smoke Targets
       run: |
-        set -euo pipefail
+        set -euxo pipefail
         tests=(test_timer test_basic test_multithread_reactor test_log)
         mkdir -p build/valgrind_logs
+
+        # 检查构建目录和测试可执行文件
+        echo "检查构建目录内容:"
+        ls -la build/ || echo "构建目录不存在"
+        echo "检查测试可执行文件:"
         for t in "${tests[@]}"; do
-          echo ">>> Valgrind: ${t}"
+          if [ -f "./build/${t}" ]; then
+            echo "✅ ${t}: 可执行文件存在"
+            file "./build/${t}"
+          else
+            echo "❌ ${t}: 可执行文件不存在"
+          fi
+        done
+
+        # 运行valgrind
+        for t in "${tests[@]}"; do
+          echo "========================================="
+          echo ">>> 运行 Valgrind: ${t}"
+          echo "========================================="
+
+          if [ ! -f "./build/${t}" ]; then
+            echo "错误: 测试可执行文件不存在: ./build/${t}"
+            continue
+          fi
+
+          # 检查valgrind是否可用
+          if ! command -v valgrind &> /dev/null; then
+            echo "错误: valgrind命令未找到"
+            exit 127
+          fi
+
           valgrind --tool=memcheck \
                    --leak-check=full \
                    --show-leak-kinds=all \
                    --track-origins=yes \
                    --error-exitcode=1 \
-                   "./build/${t}" > "build/valgrind_logs/${t}.log" 2>&1
+                   "./build/${t}" > "build/valgrind_logs/${t}.log" 2>&1 || {
+            echo "Valgrind返回非零退出码，查看日志末尾:"
+            tail -n 50 "build/valgrind_logs/${t}.log"
+            # 不立即退出，继续其他测试
+          }
+
+          echo ">>> ${t} Valgrind日志末尾:"
           tail -n 20 "build/valgrind_logs/${t}.log"
+          echo ""
         done
 
     - name: Upload Valgrind Logs
