@@ -133,13 +133,7 @@ bool SaveBenchmarkResult(const BenchmarkResult& result, const std::string& outpu
         // 保存原始指标为CSV（便于Excel导入）
         std::ofstream csv_file(output_dir + "/metrics.csv");
         if (csv_file.is_open()) {
-            csv_file << "name,value,unit,description\n";
-            for (const auto& metric : result.metrics) {
-                csv_file << "\"" << metric.name << "\","
-                        << metric.value << ","
-                        << "\"" << metric.unit << "\","
-                        << "\"" << metric.description << "\"\n";
-            }
+            csv_file << result.ToCsv();
             csv_file.close();
         }
 
@@ -147,14 +141,75 @@ bool SaveBenchmarkResult(const BenchmarkResult& result, const std::string& outpu
         if (!result.time_series.empty()) {
             std::ofstream ts_file(output_dir + "/time_series.csv");
             if (ts_file.is_open()) {
-                ts_file << "timestamp_ms,value\n";
-                for (const auto& point : result.time_series) {
-                    auto timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        point.timestamp.time_since_epoch()).count();
-                    ts_file << timestamp_ms << "," << point.value << "\n";
-                }
+                ts_file << result.ToTimeSeriesCsv();
                 ts_file.close();
             }
+        }
+
+        // 增强：保存分组指标CSV
+        std::ofstream grouped_csv_file(output_dir + "/metrics_grouped.csv");
+        if (grouped_csv_file.is_open()) {
+            grouped_csv_file << "group,name,value,unit,description\n";
+
+            // 使用与ToCsv相同的分类逻辑
+            auto classify_metric = [](const std::string& name) -> std::string {
+                if (name.find("error") != std::string::npos ||
+                    name.find("failed") != std::string::npos) {
+                    return "errors";
+                } else if (name.find("latency") != std::string::npos ||
+                           name.find("_latency") != std::string::npos ||
+                           name.find("delay") != std::string::npos) {
+                    return "latency";
+                } else if (name.find("qps") != std::string::npos ||
+                           name.find("throughput") != std::string::npos ||
+                           name.find("_requests") != std::string::npos) {
+                    return "throughput";
+                } else if (name.find("concurrent") != std::string::npos ||
+                           name.find("connection") != std::string::npos) {
+                    return "concurrency";
+                } else if (name.find("memory") != std::string::npos ||
+                           name.find("cpu") != std::string::npos ||
+                           name.find("rss") != std::string::npos ||
+                           name.find("vm") != std::string::npos) {
+                    return "resources";
+                }
+                return "other";
+            };
+
+            for (const auto& metric : result.metrics) {
+                std::string group = classify_metric(metric.name);
+
+                // CSV转义
+                std::string escaped_name = metric.name;
+                std::string escaped_description = metric.description;
+
+                if (escaped_name.find(',') != std::string::npos ||
+                    escaped_name.find('"') != std::string::npos) {
+                    size_t pos = 0;
+                    while ((pos = escaped_name.find('"', pos)) != std::string::npos) {
+                        escaped_name.replace(pos, 1, "\"\"");
+                        pos += 2;
+                    }
+                    escaped_name = "\"" + escaped_name + "\"";
+                }
+
+                if (escaped_description.find(',') != std::string::npos ||
+                    escaped_description.find('"') != std::string::npos) {
+                    size_t pos = 0;
+                    while ((pos = escaped_description.find('"', pos)) != std::string::npos) {
+                        escaped_description.replace(pos, 1, "\"\"");
+                        pos += 2;
+                    }
+                    escaped_description = "\"" + escaped_description + "\"";
+                }
+
+                grouped_csv_file << group << ","
+                               << escaped_name << ","
+                               << metric.value << ","
+                               << metric.unit << ","
+                               << escaped_description << "\n";
+            }
+            grouped_csv_file.close();
         }
 
         return true;
