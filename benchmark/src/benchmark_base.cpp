@@ -16,6 +16,26 @@ using json = nlohmann::json;
 namespace tinywebserver {
 namespace benchmark {
 
+namespace {
+    // 辅助函数：获取指标组描述
+    std::string GetGroupDescription(const std::string& group_name) {
+        static const std::map<std::string, std::string> descriptions = {
+            {"throughput", "吞吐量相关指标（QPS、请求数、网络吞吐量）"},
+            {"latency", "延迟分布指标（平均延迟、百分位延迟、标准差）"},
+            {"errors", "错误相关指标（错误率、失败请求数）"},
+            {"concurrency", "并发处理指标（并发连接数）"},
+            {"resources", "系统资源使用指标（内存、CPU、文件描述符）"},
+            {"other", "其他未分类指标"}
+        };
+
+        auto it = descriptions.find(group_name);
+        if (it != descriptions.end()) {
+            return it->second;
+        }
+        return "未分类指标";
+    }
+}
+
 // BenchmarkResult 方法实现
 std::string BenchmarkResult::ToJson() const {
     json j;
@@ -36,7 +56,7 @@ std::string BenchmarkResult::ToJson() const {
     j["start_time"] = time_to_string(start_time);
     j["end_time"] = time_to_string(end_time);
 
-    // 指标
+    // 指标（扁平结构，向后兼容）
     json metrics_json = json::array();
     for (const auto& metric : metrics) {
         json m;
@@ -47,6 +67,85 @@ std::string BenchmarkResult::ToJson() const {
         metrics_json.push_back(m);
     }
     j["metrics"] = metrics_json;
+
+    // 增强：按类别分组的指标
+    json metric_groups_json = json::array();
+
+    // 自动分类指标
+    std::map<std::string, json> groups;
+
+    for (const auto& metric : metrics) {
+        std::string group_name = "other";
+
+        // 根据指标名称分类（优先级：错误 > 延迟 > 吞吐量 > 并发 > 资源 > 其他）
+        const std::string& name = metric.name;
+        if (name.find("error") != std::string::npos ||
+            name.find("failed") != std::string::npos) {
+            group_name = "errors";
+        } else if (name.find("latency") != std::string::npos ||
+                   name.find("_latency") != std::string::npos ||
+                   name.find("delay") != std::string::npos) {
+            group_name = "latency";
+        } else if (name.find("qps") != std::string::npos ||
+                   name.find("throughput") != std::string::npos ||
+                   name.find("_requests") != std::string::npos) {
+            group_name = "throughput";
+        } else if (name.find("concurrent") != std::string::npos ||
+                   name.find("connection") != std::string::npos) {
+            group_name = "concurrency";
+        } else if (name.find("memory") != std::string::npos ||
+                   name.find("cpu") != std::string::npos ||
+                   name.find("rss") != std::string::npos ||
+                   name.find("vm") != std::string::npos) {
+            group_name = "resources";
+        }
+
+        // 创建或获取组
+        if (!groups.count(group_name)) {
+            json group;
+            group["name"] = group_name;
+            group["description"] = GetGroupDescription(group_name);
+            group["metrics"] = json::array();
+            groups[group_name] = group;
+        }
+
+        // 添加指标到组
+        json metric_json;
+        metric_json["name"] = metric.name;
+        metric_json["value"] = metric.value;
+        metric_json["unit"] = metric.unit;
+        metric_json["description"] = metric.description;
+        groups[group_name]["metrics"].push_back(metric_json);
+    }
+
+    // 将组添加到JSON数组
+    for (const auto& pair : groups) {
+        metric_groups_json.push_back(pair.second);
+    }
+
+    if (!metric_groups_json.empty()) {
+        j["metric_groups"] = metric_groups_json;
+    }
+
+    // 增强：关键指标摘要
+    json summary_json = json::object();
+
+    // 提取关键指标
+    for (const auto& metric : metrics) {
+        const std::string& name = metric.name;
+        if (name == "qps" || name == "error_rate" || name == "p99_latency" ||
+            name == "avg_latency" || name == "throughput_mbps") {
+            summary_json[name] = {
+                {"value", metric.value},
+                {"unit", metric.unit},
+                {"description", metric.description}
+            };
+        }
+    }
+
+    if (!summary_json.empty()) {
+        j["summary"] = summary_json;
+    }
 
     // 时间序列
     json ts_json = json::array();
@@ -338,6 +437,98 @@ double Statistics::CalculateVariance(const std::vector<double>& values) {
     }
 
     return sum_squared_diff / values.size();
+}
+
+// BenchmarkResult CSV导出方法实现
+std::string BenchmarkResult::ToCsv() const {
+    std::ostringstream oss;
+
+    // CSV头部
+    oss << "name,value,unit,description,group\n";
+
+    // 指标分类函数（复用ToJson中的逻辑）
+    auto classify_metric = [](const std::string& name) -> std::string {
+        if (name.find("error") != std::string::npos ||
+            name.find("failed") != std::string::npos) {
+            return "errors";
+        } else if (name.find("latency") != std::string::npos ||
+                   name.find("_latency") != std::string::npos ||
+                   name.find("delay") != std::string::npos) {
+            return "latency";
+        } else if (name.find("qps") != std::string::npos ||
+                   name.find("throughput") != std::string::npos ||
+                   name.find("_requests") != std::string::npos) {
+            return "throughput";
+        } else if (name.find("concurrent") != std::string::npos ||
+                   name.find("connection") != std::string::npos) {
+            return "concurrency";
+        } else if (name.find("memory") != std::string::npos ||
+                   name.find("cpu") != std::string::npos ||
+                   name.find("rss") != std::string::npos ||
+                   name.find("vm") != std::string::npos) {
+            return "resources";
+        }
+        return "other";
+    };
+
+    // 输出所有指标
+    for (const auto& metric : metrics) {
+        std::string group = classify_metric(metric.name);
+
+        // CSV转义：如果值包含逗号、引号或换行符，需要转义
+        std::string escaped_name = metric.name;
+        std::string escaped_description = metric.description;
+
+        // 简单的转义：如果包含逗号或引号，用双引号包裹
+        if (escaped_name.find(',') != std::string::npos ||
+            escaped_name.find('"') != std::string::npos) {
+            // 替换双引号为两个双引号
+            size_t pos = 0;
+            while ((pos = escaped_name.find('"', pos)) != std::string::npos) {
+                escaped_name.replace(pos, 1, "\"\"");
+                pos += 2;
+            }
+            escaped_name = "\"" + escaped_name + "\"";
+        }
+
+        if (escaped_description.find(',') != std::string::npos ||
+            escaped_description.find('"') != std::string::npos) {
+            size_t pos = 0;
+            while ((pos = escaped_description.find('"', pos)) != std::string::npos) {
+                escaped_description.replace(pos, 1, "\"\"");
+                pos += 2;
+            }
+            escaped_description = "\"" + escaped_description + "\"";
+        }
+
+        oss << escaped_name << ","
+            << metric.value << ","
+            << metric.unit << ","
+            << escaped_description << ","
+            << group << "\n";
+    }
+
+    return oss.str();
+}
+
+std::string BenchmarkResult::ToTimeSeriesCsv() const {
+    std::ostringstream oss;
+
+    if (time_series.empty()) {
+        return "timestamp_ms,value\n";
+    }
+
+    // CSV头部
+    oss << "timestamp_ms,value\n";
+
+    // 输出时间序列数据
+    for (const auto& point : time_series) {
+        auto timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            point.timestamp.time_since_epoch()).count();
+        oss << timestamp_ms << "," << point.value << "\n";
+    }
+
+    return oss.str();
 }
 
 } // namespace benchmark

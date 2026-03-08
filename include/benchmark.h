@@ -66,6 +66,12 @@ struct BenchmarkResult {
     /// 转换为JSON字符串
     std::string ToJson() const;
 
+    /// 转换为CSV格式字符串（指标数据）
+    std::string ToCsv() const;
+
+    /// 转换为时间序列CSV格式字符串
+    std::string ToTimeSeriesCsv() const;
+
     /// 从JSON字符串解析
     static BenchmarkResult FromJson(const std::string& json_str);
 };

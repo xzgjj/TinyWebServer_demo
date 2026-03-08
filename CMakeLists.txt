@@ -57,6 +57,14 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR})
 # --- 2. 依赖与核心库 ---
 find_package(Threads REQUIRED)
 
+# GTest for unit testing
+find_package(GTest QUIET)
+if(GTest_FOUND)
+    message(STATUS "GTest found: ${GTest_VERSION}")
+else()
+    message(WARNING "GTest not found, some tests will be disabled")
+endif()
+
 # JSON 库依赖 (nlohmann/json)
 # 优先级：1) find_package 2) 本地 third_party/json.hpp
 find_package(nlohmann_json 3.11.2 QUIET)
@@ -212,9 +220,16 @@ if(BUILD_TESTING)
         test_keep_alive
         test_conditional_request
         test_memory_pool
-        # test_multi_listen_socket  # 需要gtest，暂时禁用
-        # test_batch_io_handler     # 需要gtest，暂时禁用
-        # test_so_reuseport_integration  # 需要gtest，暂时禁用
+        test_multi_listen_socket
+        test_batch_io_handler
+        test_so_reuseport_integration
+    )
+
+    # 需要GTest的测试列表
+    set(TESTS_REQUIRING_GTEST
+        test_multi_listen_socket
+        test_batch_io_handler
+        test_so_reuseport_integration
     )
 
     # 适合 CI 的快速冒烟集
@@ -243,6 +258,10 @@ if(BUILD_TESTING)
         if(EXISTS ${TEST_FILE})
             add_executable(${test_name} test/${test_name}.cpp)
             target_link_libraries(${test_name} PRIVATE webserver_core project_configs nlohmann_json::nlohmann_json)
+            if(${test_name} IN_LIST TESTS_REQUIRING_GTEST AND GTest_FOUND)
+                target_link_libraries(${test_name} PRIVATE GTest::gtest GTest::gtest_main)
+                message(STATUS "  → 链接GTest库: ${test_name}")
+            endif()
             add_test(NAME ${test_name} COMMAND ${test_name})
             set_tests_properties(${test_name} PROPERTIES TIMEOUT 30)
 
@@ -278,6 +297,7 @@ if(BUILD_BENCHMARKS)
         benchmark/src/benchmark_memory.cpp
         benchmark/src/benchmark_concurrent.cpp
         benchmark/src/benchmark_factory.cpp
+        benchmark/src/benchmark_step_stress.cpp
     )
 
     # 检查每个源文件是否存在
@@ -317,6 +337,9 @@ if(BUILD_BENCHMARKS)
             ${CMAKE_BINARY_DIR}/configs/benchmark/
         COMMAND ${CMAKE_COMMAND} -E copy
             ${PROJECT_SOURCE_DIR}/configs/benchmark/concurrent_config.json
+            ${CMAKE_BINARY_DIR}/configs/benchmark/
+        COMMAND ${CMAKE_COMMAND} -E copy
+            ${PROJECT_SOURCE_DIR}/configs/benchmark/step_stress_config.json
             ${CMAKE_BINARY_DIR}/configs/benchmark/
         COMMENT "复制基准测试配置文件到构建目录"
     )

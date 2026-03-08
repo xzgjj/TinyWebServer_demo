@@ -664,3 +664,55 @@ python3 tools.py benchmark baseline
   - 在main分支push时条件性更新基线
   - 在pull_request时条件性运行回归检测
   - 提交信息：`feat(ci): enhance benchmark job with performance regression detection`
+
+---
+## 2026-03-08 阶段五完善：压力测试场景扩展与测试完整性修复
+
+### 已完成（本会话）
+1. **压力测试场景扩展**：
+   - 新增 `benchmark_step_stress.cpp`：阶梯式压力测试实现
+   - 新增 `configs/benchmark/step_stress_config.json`：阶梯式压力测试配置
+   - CMake集成：添加 `benchmark_step_stress.cpp` 到基准测试源文件列表
+   - 配置文件复制：更新 `copy_benchmark_configs` 目标包含 `step_stress_config.json`
+   - 验证：`benchmark_runner list` 成功显示 `step_stress` 测试类型
+
+2. **测试完整性修复（GTest依赖问题）**：
+   - 安装 `libgtest-dev` 和 `libgmock-dev` 依赖包
+   - 取消注释 `CMakeLists.txt` 中三个需要GTest的测试目标：`test_multi_listen_socket`, `test_batch_io_handler`, `test_so_reuseport_integration`
+   - 添加 `TESTS_REQUIRING_GTEST` 列表并修改 CMake 逻辑，为这些测试链接 `GTest::gtest` 和 `GTest::gtest_main` 库
+   - 修复 `MultiListenSocket` 类：将 `IsSOReusePortSupported()` 方法从私有移到公共部分
+   - 修复测试中的 `Logger::SetLevel(LogLevel::WARN)` 调用，改为 `Logger::GetInstance().SetMinLevel(LogLevel::LOG_LEVEL_WARN)`
+   - 修复 `test_so_reuseport_integration.cpp`：
+     - 添加缺失的系统头文件（`<sys/socket.h>`, `<netinet/in.h>`, `<arpa/inet.h>`, `<unistd.h>`）
+     - 修正 `Server` 构造函数调用，添加 `PluginManager::GetInstance()` 参数
+     - 修正 `SetOnMessage` 回调签名（`const std::string&` 代替 `const char*, size_t`）
+     - 移除 JSON 配置字符串中的 C++ 风格注释（不被 JSON 解析器接受）
+
+3. **验证结果**：
+   - 所有 19 个测试通过（包括新增的三个 GTest 测试）
+   - 基准测试框架完整：`benchmark_runner list` 显示所有测试类型
+   - 构建无错误，仅有未使用参数警告（不影响功能）
+
+### 更新“已完成/正在进行”状态
+#### 已完成（新增）
+- 阶段五 v7.5：压力测试场景扩展 (5.4剩余项)
+  - 阶梯式压力测试实现与集成
+- 阶段五 v7.5：测试完整性修复 (5.4剩余项)
+  - GTest依赖问题解决，三个被禁用的测试重新启用并通过验证
+
+#### 正在进行
+1. 阶段五 v7.5 剩余项：
+   - 结果可视化增强（改进 JSON/CSV 导出格式）
+
+### 未提交改动文件
+- `CMakeLists.txt` (添加 step_stress_config.json 复制，启用GTest测试，添加GTest链接逻辑)
+- `include/reactor/multi_listen_socket.h` (将 IsSOReusePortSupported() 移到公共部分)
+- `test/test_multi_listen_socket.cpp` (修复 Logger 调用，添加 (void)supported 消除警告)
+- `test/test_batch_io_handler.cpp` (修复 Logger 调用)
+- `test/test_so_reuseport_integration.cpp` (修复 Logger 调用，添加系统头文件，修正 Server 构造函数和回调签名，移除 JSON 注释)
+- `benchmark/src/benchmark_step_stress.cpp` (新增文件)
+- `configs/benchmark/step_stress_config.json` (新增文件)
+- 其他先前修改的文件保持就绪
+
+### 上下文断点（当前状态）
+**最后一条关键信息**：阶段五(v7.5)压力测试场景扩展与测试完整性修复已完成。所有测试通过，基准测试框架包含阶梯式压力测试。剩余工作：结果可视化增强（改进 JSON/CSV 导出格式）。所有代码遵循项目规范，构建无错误。

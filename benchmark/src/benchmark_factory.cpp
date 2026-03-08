@@ -17,6 +17,7 @@ std::unique_ptr<Benchmark> CreateQpsBenchmark();
 std::unique_ptr<Benchmark> CreateLatencyBenchmark();
 std::unique_ptr<Benchmark> CreateMemoryBenchmark();
 std::unique_ptr<Benchmark> CreateConcurrentBenchmark();
+std::unique_ptr<Benchmark> CreateStepStressBenchmark();
 
 } // namespace benchmark
 } // namespace tinywebserver
@@ -29,7 +30,8 @@ static const std::unordered_map<std::string, std::function<std::unique_ptr<Bench
     {"qps",        CreateQpsBenchmark},
     {"latency",    CreateLatencyBenchmark},
     {"memory",     CreateMemoryBenchmark},
-    {"concurrent", CreateConcurrentBenchmark}
+    {"concurrent", CreateConcurrentBenchmark},
+    {"step_stress", CreateStepStressBenchmark}
 };
 
 std::unique_ptr<Benchmark> CreateBenchmark(const std::string& type) {

@@ -79,6 +79,13 @@ public:
      */
     void CloseAll();
 
+    /**
+     * @brief Check if SO_REUSEPORT is supported by the system
+     *
+     * @return true if supported, false otherwise
+     */
+    static bool IsSOReusePortSupported();
+
 private:
     /**
      * @brief Create and bind all sockets
@@ -109,13 +116,6 @@ private:
      * @return true if successful, false otherwise
      */
     bool SetSocketOptions(int fd, bool tcp_nodelay, bool tcp_cork);
-
-    /**
-     * @brief Check if SO_REUSEPORT is supported by the system
-     *
-     * @return true if supported, false otherwise
-     */
-    static bool IsSOReusePortSupported();
 
     std::vector<int> socket_fds_;
     std::string error_message_;
