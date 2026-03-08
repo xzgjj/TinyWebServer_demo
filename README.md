@@ -8,12 +8,17 @@
   <img src="https://img.shields.io/badge/-EF4444?style=flat-square" alt="bar5" />
 </p>
 
+
 > **定位说明**  
 > 本项目是基于 **Reactor 模式（epoll）** 的 C++ Web Server 工程化示例。当前处于 **v7.x 演进阶段**，重点在连接治理、可观测性、安全校验与协议完整性。
 
 ---
 
+
+
 ## 一、项目目标与边界
+
+
 
 ### 1. 项目目标
 
@@ -34,7 +39,11 @@
 
 ---
 
+
+
 ## 二、整体架构概览
+
+
 
 当前采用 Main/Sub Reactor 分层模型：Main Reactor 专注接入，Sub Reactor 负责 I/O 事件循环与连接状态推进。
 
@@ -55,14 +64,16 @@
 
 ### 架构分层
 
-| 层次 | 关键组件 | 职责 |
-| --- | --- | --- |
-| 接入层 | `Server` / Acceptor | 监听端口、accept 新连接、连接分发 |
-| 事件层 | `EventLoop` / `Channel` | `epoll_wait` 事件收集与回调派发 |
-| 连接层 | `Connection` | 状态机、读写缓冲、背压、超时、关闭路径 |
-| 协议层 | `HttpParser` / `HttpRequest` / `HttpResponse` | 解析请求、构建响应、Keep-Alive/条件请求能力 |
-| 安全层 | `RequestValidator` | 方法白名单、路径规范化、头部与请求体边界检查 |
-| 配置与观测层 | `ServerConfig` / `ServerMetrics` / Structured Logger | 配置外部化、指标导出、结构化日志 |
+| 层次         | 关键组件                                             | 职责                                         |
+| ------------ | ---------------------------------------------------- | -------------------------------------------- |
+| 接入层       | `Server` / Acceptor                                  | 监听端口、accept 新连接、连接分发            |
+| 事件层       | `EventLoop` / `Channel`                              | `epoll_wait` 事件收集与回调派发              |
+| 连接层       | `Connection`                                         | 状态机、读写缓冲、背压、超时、关闭路径       |
+| 协议层       | `HttpParser` / `HttpRequest` / `HttpResponse`        | 解析请求、构建响应、Keep-Alive/条件请求能力  |
+| 安全层       | `RequestValidator`                                   | 方法白名单、路径规范化、头部与请求体边界检查 |
+| 配置与观测层 | `ServerConfig` / `ServerMetrics` / Structured Logger | 配置外部化、指标导出、结构化日志             |
+
+
 
 ### 核心约束
 
@@ -73,7 +84,11 @@
 
 ---
 
+
+
 ## 三、Reactor 模式的工程理解
+
+
 
 ### 1. 从 epoll 到 Reactor
 
@@ -99,17 +114,21 @@ fd + events + callback => Channel
 
 ---
 
-## 四、关键实现的版本情况（结合当前 v7 状态）
+
+
+## 四、关键实现的版本情况（结合当v7 状态）
+
+
 
 ### 1. 版本能力矩阵
 
-| 阶段 | 关键能力 | 状态 |
-| --- | --- | --- |
-| v5 基线 | Multi-Reactor、EventLoop/Channel、静态资源服务 | ✅ 已稳定 |
-| v7.1 | Connection 完整状态机、读写缓冲边界、背压机制 | ✅ 已完成 |
-| v7.2 | 统一错误码（`WebError`）、`Error` 封装、超时与关闭路径收敛 | ✅ 已完成 |
-| v7.3 | JSON 配置系统、指标系统、结构化日志、测试分类 | ✅ 已完成 |
-| v7.4 当前 | 请求安全验证、Keep-Alive、条件请求、HTTP/2 基础模块 | 🟡 已集成，持续打磨 |
+| 阶段      | 关键能力                                                   | 状态               |
+| --------- | ---------------------------------------------------------- | ------------------ |
+| v5 基线   | Multi-Reactor、EventLoop/Channel、静态资源服务             | ✅ 已稳定           |
+| v7.1      | Connection 完整状态机、读写缓冲边界、背压机制              | ✅ 已完成           |
+| v7.2      | 统一错误码（`WebError`）、`Error` 封装、超时与关闭路径收敛 | ✅ 已完成           |
+| v7.3      | JSON 配置系统、指标系统、结构化日志、测试分类              | ✅ 已完成           |
+| v7.4 当前 | 请求安全验证、Keep-Alive、条件请求、HTTP/2 基础模块        | 🟡 已集成，持续打磨 |
 
 ### 2. 已落地的工程特性
 
@@ -126,7 +145,11 @@ fd + events + callback => Channel
 
 ---
 
+
+
 ## 五、问题清单
+
+
 
 ### Reactor / epoll
 
@@ -163,23 +186,25 @@ fd + events + callback => Channel
 
 ---
 
+
+
 ## 六、Reactor 演进方向
 
 > 
 
-### 已落地（v7.1 ~ v7.3）
+### 已落地
 
 - Connection 状态机与资源边界控制。
 - 统一错误处理体系与超时管理。
 - 配置系统、指标系统、结构化日志。
 
-### 当前重点（v7.4）
+### 当前重点
 
 - 请求安全验证闭环（方法、路径、头部、请求体）。
 - HTTP/1.1 完整性增强（Keep-Alive、条件请求）。
 - HTTP/2 基础模块集成与测试完善。
 
-### 下一阶段（v7.5+）
+### 下一阶段
 
 - 性能工程：分级内存池、I/O 批处理、性能回归基线。
 - 扩展工程：插件边界与最小可用插件链路。
@@ -193,7 +218,11 @@ fd + events + callback => Channel
 
 ---
 
+
+
 ## 七、测试、部署与工程化建议
+
+
 
 ### 1. 测试策略
 
@@ -235,9 +264,14 @@ curl -v --keepalive-time 5 --keepalive http://localhost:8080/index.html
 
 ---
 
-## 八、性能基准测试框架 (v7.5+)
+
+
+## 八、性能基准测试框架 
+
+
 
 ### 1. 设计目标
+
 - **数据驱动优化**：所有性能优化必须有前后对比数据
 - **可重复验证**：测试结果必须可重复、可追溯、可对比
 - **全面覆盖**：覆盖吞吐量、延迟、内存、并发等多个维度
@@ -245,14 +279,15 @@ curl -v --keepalive-time 5 --keepalive http://localhost:8080/index.html
 
 ### 2. 测试类型
 
-| 测试类型 | 核心指标 | 测量工具 |
-|---------|----------|----------|
-| **QPS测试** | 每秒请求数、吞吐量、成功率 | 内置HTTP客户端、统计分析 |
-| **延迟测试** | P50/P90/P99/P99.9延迟、延迟分布 | 高精度计时、百分位计算 |
-| **内存测试** | RSS/VmSize、内存增长、潜在泄漏 | `/proc`监控、资源跟踪 |
-| **并发测试** | 最大连接数、连接建立速率、稳定性 | 连接池、心跳监测 |
+| 测试类型     | 核心指标                         | 测量工具                 |
+| ------------ | -------------------------------- | ------------------------ |
+| **QPS测试**  | 每秒请求数、吞吐量、成功率       | 内置HTTP客户端、统计分析 |
+| **延迟测试** | P50/P90/P99/P99.9延迟、延迟分布  | 高精度计时、百分位计算   |
+| **内存测试** | RSS/VmSize、内存增长、潜在泄漏   | `/proc`监控、资源跟踪    |
+| **并发测试** | 最大连接数、连接建立速率、稳定性 | 连接池、心跳监测         |
 
 ### 3. 数据存储与格式
+
 ```
 TinyWebServer_demo/
 ├── benchmark_results/           # 测试结果存储 (.gitignore)
@@ -272,7 +307,10 @@ TinyWebServer_demo/
 
 ### 4. 使用方式
 
+
+
 #### 命令行工具
+
 ```bash
 # 构建基准测试框架
 python3 tools.py build
@@ -296,19 +334,117 @@ python3 tools.py benchmark compare --baseline benchmark_results/baseline/qps --c
 ```
 
 #### 直接使用基准测试运行器
+
 ```bash
 # 编译后直接运行
 ./build/benchmark_runner run --type qps --duration 10 --connections 50
 
 # 查看帮助
 ./build/benchmark_runner help
+
+
+运行完整测试套件
+
+  # 运行所有测试（包括新增的GTest测试）
+  cd build
+  ctest --output-on-failure
+
+  # 或使用分类测试
+  ctest -L smoke           # 冒烟测试（快速验证）       
+  ctest -L integration     # 集成测试
+
+  # 预期：所有19个测试通过
+  # 100% tests passed, 19 tests passed out of 19        
+
+  步骤3：验证关键功能测试
+
+  # 运行阶段五新增的核心功能测试
+  ./build/test_memory_pool                    #
+  内存池优化
+  ./build/test_multi_listen_socket            #
+  SO_REUSEPORT支持
+  ./build/test_batch_io_handler               #
+  批量I/O处理
+  ./build/test_so_reuseport_integration       #
+  SO_REUSEPORT集成测试
+
+  # 预期：每个测试都显示 "PASSED" 或类似成功信息        
+
+  步骤4：验证基准测试结果可视化增强（核心验证）
+
+   运行基准测试
+
+  # 运行QPS测试（快速验证）
+  python3 tools.py benchmark run --type qps --duration 2
+   --connections 1
+
+  # 预期输出：
+  # 关键指标:
+  #   qps: XXX requests/second
+  #   error_rate: 0 %
+  #   avg_latency: X.XX ms
+  #   p99_latency: X.XX ms
+  # 结果已保存到:
+  benchmark_results/XXXX-XX-XXTXX-XX-XX_unknown
+
+  
+
+  # 验证其他基准测试类型
+
+  运行延迟测试
+  python3 tools.py benchmark run --type latency
+  --duration 2 --connections 5
+
+   运行并发测试
+  python3 tools.py benchmark run --type concurrent      
+  --duration 3 --connections 10
+
+   运行阶梯式压力测试
+  python3 tools.py benchmark run --type step_stress     
+  --duration 5 --connections 20
+
+  检查每个测试都生成了完整的输出文件
+
+
 ```
 
+- **验证其他基准测试类型**
+
+```
+  ：验证服务器功能（可选）
+
+  启动服务器
+  cd build
+  ./server &
+
+  mkdir -p local/logs
+  获取服务器PID
+  SERVER_PID=$!
+  echo "服务器PID: $SERVER_PID"
+
+  发送测试请求
+  curl http://127.0.0.1:8080/index.html
+
+  停止服务器
+  kill $SERVER_PID
+
+  预期：成功获取HTML页面内容
+```
+
+
+
+
+
+
+
+
+```
 ### 5. 数据驱动优化流程
 ```
-[基线测量] → [实施优化] → [后优化测量] → [数据对比分析] → [决策：接受/回滚]
-```
 
+[基线测量] → [实施优化] → [后优化测量] → [数据对比分析] → [决策：接受/回滚]
+
+```
 ### 6. 集成到开发流程
 - **每次提交前**：运行快速基准测试（30秒）
 - **性能优化时**：必须提供前后对比数据
@@ -329,7 +465,11 @@ python3 tools.py benchmark compare --baseline benchmark_results/baseline/qps --c
 
 ---
 
+
+
 ## 九、总结
+
+
 
 本项目的核心价值不在“功能数量”，而在“工程完整性”：
 
@@ -337,6 +477,6 @@ python3 tools.py benchmark compare --baseline benchmark_results/baseline/qps --c
 - 把连接生命周期与资源治理做成可验证体系。
 - 把配置、日志、指标与测试串成持续演进闭环。
 
- 
+
 关键路径时序图（accept -> parse -> validate -> respond -> close/reuse）。  
 

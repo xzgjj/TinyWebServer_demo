@@ -280,6 +280,17 @@ if(BUILD_TESTING)
     endforeach()
 endif()
 
+# --- 运行时目录初始化 ---
+# 创建必要的运行时目录和默认文件（项目根目录）
+add_custom_target(create_runtime_dirs ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PROJECT_SOURCE_DIR}/public
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PROJECT_SOURCE_DIR}/local/logs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${PROJECT_SOURCE_DIR}/local/logs/benchmark
+    COMMAND bash -c "test -f '${PROJECT_SOURCE_DIR}/public/index.html' || echo '<h1>TinyWebServer V3</h1>' > '${PROJECT_SOURCE_DIR}/public/index.html'"
+    COMMAND ${CMAKE_COMMAND} -E echo "创建运行时目录和默认文件：public/, local/logs/, local/logs/benchmark/, public/index.html"
+    COMMENT "创建运行时目录结构和默认文件"
+)
+
 # --- 5. 性能基准测试框架 ---
 option(BUILD_BENCHMARKS "Build performance benchmarks" ON)
 
@@ -343,6 +354,7 @@ if(BUILD_BENCHMARKS)
             ${CMAKE_BINARY_DIR}/configs/benchmark/
         COMMENT "复制基准测试配置文件到构建目录"
     )
+
 
     message(STATUS "✅ 基准测试框架配置完成")
 endif()
