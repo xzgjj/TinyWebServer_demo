@@ -283,8 +283,8 @@ std::vector<std::string> GetAvailableBenchmarkTypes();
 int main(int argc, char* argv[]) {
     using namespace tinywebserver::benchmark;
 
-    // 初始化日志
-    Logger::GetInstance().Init("./benchmark_runner.log");
+    // 初始化日志，使用DEBUG级别以获取详细输出
+    Logger::GetInstance().Init("./benchmark_runner.log", LogLevel::LOG_LEVEL_DEBUG);
     LOG_INFO("基准测试运行器启动");
 
     if (argc < 2) {
@@ -315,6 +315,7 @@ int main(int argc, char* argv[]) {
         std::string config_file;
         std::string output_dir;
         std::string baseline_dir;
+        bool port_specified = false;
 
         for (int i = 2; i < argc; ++i) {
             std::string arg = argv[i];
@@ -335,6 +336,7 @@ int main(int argc, char* argv[]) {
                 config.server_host = argv[++i];
             } else if (arg == "--port" && i + 1 < argc) {
                 config.server_port = std::stoi(argv[++i]);
+                port_specified = true;
             } else if (arg == "--path" && i + 1 < argc) {
                 config.request_path = argv[++i];
             } else if (arg == "--method" && i + 1 < argc) {
@@ -343,6 +345,12 @@ int main(int argc, char* argv[]) {
                 PrintHelp();
                 return 0;
             }
+        }
+
+        // 如果没有指定端口且当前为默认端口8080，改为8081以避免冲突
+        if (!port_specified && config.server_port == 8080) {
+            config.server_port = 8081;
+            LOG_INFO("使用默认端口8081以避免冲突");
         }
 
         // 如果提供了配置文件，从文件加载配置
