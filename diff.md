@@ -641,3 +641,50 @@ chore: exclude build_temp directories from git tracking
 - ✅ 构建目录已从git索引中移除（`git status`不再显示）
 - ✅ 本地构建目录保持不变，不影响开发构建
 - ✅ 更改已推送到远程仓库（`git push`成功）
+
+---
+
+## 2026-03-08 工具脚本优化：统一构建目录清理
+
+### 涉及文件
+1. `tools.py` - clean()函数扩展，清理所有构建目录
+
+### 核心 Diff 摘要
+#### 1. clean()函数扩展（清理所有构建目录）
+```diff
+def clean():
+-    if BUILD_DIR.exists():
+-        print(f">> 清理构建目录: {BUILD_DIR}")
+-        shutil.rmtree(BUILD_DIR)
++    # 清理所有构建目录（在.gitignore中定义的临时构建目录）
++    build_dirs = [
++        ROOT_DIR / "build",
++        ROOT_DIR / "build_temp",
++        ROOT_DIR / "build_temp_check"
++    ]
++
++    cleaned = []
++    for build_dir in build_dirs:
++        if build_dir.exists():
++            print(f">> 清理构建目录: {build_dir}")
++            shutil.rmtree(build_dir)
++            cleaned.append(build_dir.name)
++
++    if not cleaned:
++        print(">> 没有需要清理的构建目录")
++    else:
++        print(f">> 已清理的目录: {', '.join(cleaned)}")
+```
+
+### 修改意图
+1. **统一清理**：扩展clean()函数以清理所有在`.gitignore`中定义的构建目录（`build/`、`build_temp/`、`build_temp_check/`）
+2. **保持项目整洁**：避免残留多个构建目录，保持项目根目录结构清晰
+3. **改进用户体验**：提供清晰的反馈信息，显示已清理的目录列表
+4. **向后兼容**：仍然清理原有的`build/`目录，同时新增对其他构建目录的支持
+5. **符合最佳实践**：所有临时构建文件应可通过单一命令清理
+
+### 验证状态
+- ✅ `tools.py` 语法正确，无编译错误
+- ✅ clean()函数逻辑正确，安全删除目录
+- ✅ 用户反馈信息清晰，显示已清理的目录
+- ✅ 保持与现有工作流的兼容性
