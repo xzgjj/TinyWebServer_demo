@@ -2,6 +2,43 @@
 
 
 
+## 2026-03-08 (structured_logger修复)
+
+### 涉及文件
+1. `src/logging/structured_logger.cpp` - 修复POSIX时间函数兼容性
+
+### 核心 Diff 摘要
+#### 1. 修复时间函数兼容性
+- 添加 `#define _POSIX_C_SOURCE 200112L` 启用 `localtime_r`/`gmtime_r`
+- 包含 `<ctime>` 头文件
+- 添加错误处理：当时间转换失败时使用默认值
+- 保持线程安全，使用POSIX特定函数替代标准函数
+
+#### 2. 代码变更
+```diff
++#define _POSIX_C_SOURCE 200112L  // 启用 POSIX 扩展（localtime_r/gmtime_r）
+ #include "logging/structured_logger.h"
+ #include "async_Logger.h"
+ #include "config/server_config.h"
+ #include <iomanip>
+ #include <sstream>
+ #include <iostream>
+ #include <mutex>
++#include <ctime>
+```
+
+```diff
+-    std::tm* tm_ptr = std::localtime(&time_t);
+-    if (tm_ptr) {
+-        tm_buf = *tm_ptr;
+-        oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S");
++    if (localtime_r(&time_t, &tm_buf) != nullptr) {
++        oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S");
+     } else {
+         oss << "1970-01-01 00:00:00"; // 错误回退
+     }
+```
+
 ## 2026-03-08 (CI修复与历史清理)
 
 ### 涉及文件

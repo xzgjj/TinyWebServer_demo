@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200112L  // 启用 POSIX 扩展（localtime_r/gmtime_r）
 #include "logging/structured_logger.h"
 #include "async_Logger.h"
 #include "config/server_config.h"
@@ -5,6 +6,7 @@
 #include <sstream>
 #include <iostream>
 #include <mutex>
+#include <ctime>
 
 namespace tinywebserver {
 
@@ -18,8 +20,11 @@ std::string StructuredLogEntry::ToText() const {
     // 时间戳
     auto time_t = std::chrono::system_clock::to_time_t(timestamp);
     std::tm tm_buf;
-    localtime_r(&time_t, &tm_buf);
-    oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S");
+    if (localtime_r(&time_t, &tm_buf) != nullptr) {
+        oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S");
+    } else {
+        oss << "1970-01-01 00:00:00"; // 错误回退
+    }
 
     // 日志级别
     const char* level_str = "";
@@ -63,8 +68,11 @@ std::string StructuredLogEntry::ToJson() const {
     // 时间戳（ISO 8601格式）
     auto time_t = std::chrono::system_clock::to_time_t(timestamp);
     std::tm tm_buf;
-    gmtime_r(&time_t, &tm_buf);
-    oss << "\"timestamp\": \"" << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%SZ") << "\", ";
+    if (gmtime_r(&time_t, &tm_buf) != nullptr) {
+        oss << "\"timestamp\": \"" << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%SZ") << "\", ";
+    } else {
+        oss << "\"timestamp\": \"1970-01-01T00:00:00Z\", "; // 错误回退
+    }
 
     // 日志级别
     const char* level_str = "";
