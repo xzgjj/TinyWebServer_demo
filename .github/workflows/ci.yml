@@ -82,3 +82,27 @@ jobs:
       with:
         name: valgrind-logs
         path: build/valgrind_logs
+
+  benchmark:
+    name: Performance Benchmark
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ ninja-build
+    - name: Configure CMake
+      run: >
+        cmake -S . -B build -G Ninja
+        -DCMAKE_BUILD_TYPE=Release
+        -DBUILD_TESTING=ON
+        -DBUILD_BENCHMARKS=ON
+    - name: Build
+      run: cmake --build build --parallel
+    - name: Run Quick Benchmark
+      run: |
+        ./build/benchmark_runner list
+        ./build/benchmark_runner run --type qps --duration 5 --connections 10

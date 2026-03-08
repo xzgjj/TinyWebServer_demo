@@ -310,7 +310,7 @@ public:
         std::thread server_thread;
 
         try {
-            server = std::make_unique<Server>(config.server_host, config.server_port);
+            server = std::make_unique<Server>(config.server_host, config.server_port, PluginManager::GetInstance());
             server_thread = std::thread([&server]() {
                 server->Run();
             });
