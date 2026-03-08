@@ -117,6 +117,7 @@ set(CORE_SOURCES_LIST
     src/config/server_config.cpp
     src/server_metrics.cpp
     src/logging/structured_logger.cpp
+    src/memory_pool.cpp
     reactor/event_loop.cpp
     reactor/event_loop_thread.cpp
     reactor/event_loop_thread_pool.cpp
@@ -205,6 +206,7 @@ if(BUILD_TESTING)
         test_request_validator
         test_keep_alive
         test_conditional_request
+        test_memory_pool
     )
 
     # 适合 CI 的快速冒烟集
