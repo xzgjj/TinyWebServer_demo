@@ -60,6 +60,14 @@ jobs:
         -DBUILD_TESTING=ON
         -DENABLE_ASAN=OFF
 
+    - name: Verify ASan is Disabled
+      run: |
+        echo "检查CMake缓存中的ASan设置:"
+        grep -i asan build/CMakeCache.txt 2>/dev/null || echo "CMakeCache.txt未找到或未包含ASan设置"
+        echo "检查CMake输出是否包含'ASan ENABLED'或'ASan DISABLED':"
+        # 重新运行配置以查看输出
+        cmake -S . -B build -DENABLE_ASAN=OFF 2>&1 | grep -i asan || echo "输出中未找到ASan相关信息"
+
     - name: Build
       run: cmake --build build --parallel
 
