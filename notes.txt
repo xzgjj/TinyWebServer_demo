@@ -560,6 +560,14 @@ python3 tools.py benchmark baseline
 ---
 
 ### 本次增量记录
+- 2026-03-08：阶段五完善 - 结果可视化增强（阶段一完成）
+  - 基准测试统计指标扩展：添加p95、p99.9、min、max、stddev延迟统计
+  - 百分位数命名统一：p999替代p99_9
+  - 本地文件组织：移动临时文件到local/目录
+  - 日志路径更新：tiny_server.log和benchmark_runner.log生成到local/logs/
+  - .gitignore更新：添加audit_report.md、diff.md等临时文件
+  - 提交信息：`feat(v7.5): enhance benchmark results and organize local files`
+
 - 2026-03-08：修复构建目录git跟踪问题
   - 添加 `build_temp/` 和 `build_temp_check/` 到 `.gitignore` 文件
   - 从git索引中移除已提交的构建产物（保留本地文件）
