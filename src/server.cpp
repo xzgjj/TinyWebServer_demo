@@ -43,6 +43,7 @@ int CreateListenSocket(unsigned short port, int backlog) {
 
 
 Server::Server(const std::string& ip, int port,
+               PluginManager& plugin_manager,
                const SOReusePortOptions& reuseport_opts)
     : main_loop_(std::make_unique<EventLoop>()),
       thread_pool_(std::make_unique<EventLoopThreadPool>(main_loop_.get())),
@@ -52,6 +53,7 @@ Server::Server(const std::string& ip, int port,
       backlog_(1024),
       config_(nullptr),
       keep_alive_manager_(std::make_unique<tinywebserver::KeepAliveManager>()),
+      plugin_manager_(plugin_manager),
       reuseport_opts_(reuseport_opts),
       multi_listen_socket_(nullptr) {
 
@@ -67,10 +69,12 @@ Server::Server(const std::string& ip, int port,
              reuseport_opts_.enabled ? "SO_REUSEPORT" : "traditional");
 }
 
-Server::Server(const std::shared_ptr<tinywebserver::ServerConfig>& config)
+Server::Server(const std::shared_ptr<tinywebserver::ServerConfig>& config,
+               PluginManager& plugin_manager)
     : config_(config),
       keep_alive_manager_(std::make_unique<tinywebserver::KeepAliveManager>(
-          std::chrono::seconds(config->GetLimitsOptions().keep_alive_timeout))) {
+          std::chrono::seconds(config->GetLimitsOptions().keep_alive_timeout))),
+      plugin_manager_(plugin_manager) {
 
     if (!config) {
         LOG_ERROR("Invalid configuration provided");
@@ -182,6 +186,9 @@ void Server::HandleAccept(int listen_fd) {
             connections_[conn_fd] = conn;
         }
 
+        // 通知插件：新连接建立
+        plugin_manager_.NotifyConnectionOpen(conn_fd);
+
         LOG_INFO("New connection fd=%d assigned to loop thread %s", 
                  conn_fd, io_loop->GetThreadIdString().c_str());
 
@@ -199,6 +206,8 @@ void Server::RemoveConnection(int fd) {
     size_t n = connections_.erase(fd);
     if (n == 1) {
         LOG_INFO("Connection fd=%d removed", fd);
+        // 通知插件：连接关闭
+        plugin_manager_.NotifyConnectionClose(fd);
     }
 }
 
@@ -304,6 +313,9 @@ void Server::HandleAcceptInSubReactor(int listen_fd, EventLoop* sub_loop) {
             connections_[conn_fd] = conn;
         }
 
+        // 通知插件：新连接建立
+        plugin_manager_.NotifyConnectionOpen(conn_fd);
+
         LOG_INFO("New connection fd=%d accepted in Sub Reactor %s",
                  conn_fd, sub_loop->GetThreadIdString().c_str());
 
@@ -312,5 +324,9 @@ void Server::HandleAcceptInSubReactor(int listen_fd, EventLoop* sub_loop) {
             conn->ConnectEstablished();
         });
     }
+}
+
+size_t Server::LoadPlugins() {
+    return plugin_manager_.LoadAllPlugins(*this);
 }
 
