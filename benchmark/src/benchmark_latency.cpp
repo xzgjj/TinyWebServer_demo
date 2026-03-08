@@ -67,10 +67,10 @@ public:
         try {
             server = std::make_unique<Server>(config.server_host, config.server_port);
             server_thread = std::thread([&server]() {
-                server->Start();
+                server->Run();
             });
 
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
             LOG_INFO("延迟基准测试: 服务器已启动");
         } catch (const std::exception& e) {
             result.success = false;

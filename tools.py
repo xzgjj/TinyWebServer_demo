@@ -45,7 +45,7 @@ def read_test_targets_from_cmake():
             content = f.read()
             # 匹配 set(INTEGRATION_TESTS ...) 块
             match = re.search(r'set\(INTEGRATION_TESTS(.*?)\)', content, re.DOTALL)
-            if match:
+            if match: 
                 targets = match.group(1).split()
                 test_targets.extend([t.strip() for t in targets if t.strip()])
     except Exception as e:

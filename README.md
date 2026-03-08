@@ -276,6 +276,8 @@ TinyWebServer_demo/
 ```bash
 # 构建基准测试框架
 python3 tools.py build
+python3 tools.py clean
+python3 tools.py all
 
 # 列出可用的基准测试类型
 python3 tools.py benchmark list
