@@ -31,3 +31,11 @@ AGENT_EXECUTION_PROTOCOL.md
 
 # 性能基准测试结果（不推送到远程仓库）
 benchmark_results/
+
+# 本地临时文件和日志（不推送到远程仓库）
+local/
+audit_report.md
+diff.md
+server_output.txt
+test_simple.sh
+integration_test.log

@@ -40,7 +40,7 @@ int main(int argc, char* argv[]) {
         system("echo '<h1>TinyWebServer V3</h1>' > ./public/index.html");
     }
 
-    Logger::GetInstance().Init("./tiny_server.log", LogLevel::LOG_LEVEL_DEBUG);
+    Logger::GetInstance().Init("./local/logs/tiny_server.log", LogLevel::LOG_LEVEL_DEBUG);
 
     std::unique_ptr<Server> server;
     std::shared_ptr<tinywebserver::ServerConfig> config = nullptr;
