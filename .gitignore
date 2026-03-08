@@ -1,5 +1,7 @@
 
 build/
+build_temp/
+build_temp_check/
 bin/
 *.o
 *.a
