@@ -59,7 +59,7 @@ int main(int argc, char* argv[]) {
         mkdir("./local/logs/benchmark", 0755);
     }
 
-    Logger::GetInstance().Init("./local/logs/tiny_server.log", LogLevel::LOG_LEVEL_DEBUG);
+    Logger::GetInstance().Init("./local/logs/tiny_server.log", LogLevel::LOG_LEVEL_INFO);
 
     std::unique_ptr<Server> server;
     std::shared_ptr<tinywebserver::ServerConfig> config = nullptr;
