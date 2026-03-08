@@ -51,7 +51,7 @@ public:
      * @param request HTTP 请求对象
      * @note 可以修改请求对象，添加自定义头部等
      */
-    virtual void OnRequestStart(HttpRequest& request) {}
+    virtual void OnRequestStart([[maybe_unused]] HttpRequest& request) {}
 
     /**
      * @brief 请求处理完成时调用
@@ -59,19 +59,19 @@ public:
      * @param response HTTP 响应对象
      * @note 可以修改响应对象，添加自定义头部或修改内容
      */
-    virtual void OnRequestComplete(HttpRequest& request, HttpResponse& response) {}
+    virtual void OnRequestComplete([[maybe_unused]] HttpRequest& request, [[maybe_unused]] HttpResponse& response) {}
 
     /**
      * @brief 新连接建立时调用
      * @param fd 连接的文件描述符
      */
-    virtual void OnConnectionOpen(int fd) {}
+    virtual void OnConnectionOpen([[maybe_unused]] int fd) {}
 
     /**
      * @brief 连接关闭时调用
      * @param fd 连接的文件描述符
      */
-    virtual void OnConnectionClose(int fd) {}
+    virtual void OnConnectionClose([[maybe_unused]] int fd) {}
 };
 
 /**
