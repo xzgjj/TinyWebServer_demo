@@ -4,7 +4,7 @@
  */
 
 #include "../../include/benchmark.h"
-#include <nlohmann/json.hpp>
+#include "json.hpp"
 #include <fstream>
 #include <iostream>
 #include <sstream>

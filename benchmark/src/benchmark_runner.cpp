@@ -11,7 +11,7 @@
 
 #include "../../include/benchmark.h"
 #include "../../include/Logger.h"
-#include <nlohmann/json.hpp>
+#include "json.hpp"
 #include <iostream>
 #include <fstream>
 #include <string>
