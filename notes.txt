@@ -647,3 +647,12 @@ python3 tools.py benchmark baseline
   - 改进用户反馈：显示已清理的目录列表
   - 修改意图：保持项目根目录整洁，避免残留多个构建目录
   - 提交信息：`fix(tools): extend clean command to include all build_temp directories`
+
+- 2026-03-08 commit `65c2ee4`: 增强CI基准测试job，添加性能回归检测
+  - 替换matrix策略为单job运行所有基准测试类型
+  - 添加GitHub Actions缓存用于基线存储和检索
+  - 集成compare_benchmark.py脚本进行回归检测
+  - 设置15%阈值检测性能回归
+  - 在main分支push时条件性更新基线
+  - 在pull_request时条件性运行回归检测
+  - 提交信息：`feat(ci): enhance benchmark job with performance regression detection`
