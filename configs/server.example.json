@@ -5,7 +5,9 @@
     "threads": 4,
     "backlog": 1024,
     "tcp_nodelay": true,
-    "tcp_cork": false
+    "tcp_cork": false,
+    "use_so_reuseport": false,
+    "so_reuseport_sockets": 0
   },
   "limits": {
     "max_connections": 10000,

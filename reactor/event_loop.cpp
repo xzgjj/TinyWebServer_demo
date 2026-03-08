@@ -192,25 +192,47 @@ void EventLoop::ProcessEvents(int timeout_ms) {
         }
         return;
     }
-    if (num_events > 0) {
-        LOG_INFO("EventLoop::ProcessEvents: %d events returned", num_events);
-        for (int i = 0; i < num_events; ++i) {
-            LOG_INFO("  event[%d]: fd=%d, events=0x%x", i, events_[i].data.fd, events_[i].events);
-        }
+
+    if (num_events == 0) {
+        return; // 超时，无事件
     }
-    
+
+    LOG_DEBUG("EventLoop::ProcessEvents: %d events returned", num_events);
+
+    // 将事件转换为向量以便批处理
+    std::vector<epoll_event> events_vec(events_, events_ + num_events);
+
+    // 使用 BatchIOHandler 批量处理事件
+    auto result = batch_io_handler_.ProcessBatch(
+        events_vec,
+        [this](int fd) {
+            if (read_callbacks_.count(fd)) {
+                read_callbacks_[fd](fd);
+            }
+        },
+        [this](int fd) {
+            if (write_callbacks_.count(fd)) {
+                write_callbacks_[fd](fd);
+            }
+        },
+        [this](int fd) {
+            LOG_WARN("EventLoop::ProcessEvents error on fd=%d", fd);
+            RemoveEvent(fd);
+        }
+    );
+
+    // 单独处理 wakeup_fd_ 事件（因为它的回调不在映射中）
     for (int i = 0; i < num_events; ++i) {
-        int fd = events_[i].data.fd;
-        uint32_t revents = events_[i].events;
-        
-        if (fd == wakeup_fd_) {
-            if (revents & EPOLLIN) {
+        if (events_[i].data.fd == wakeup_fd_) {
+            if (events_[i].events & EPOLLIN) {
                 HandleReadForWakeup();
             }
-        } else {
-            HandleEvent(fd, revents);
         }
     }
+
+    LOG_DEBUG("EventLoop::ProcessEvents: processed %zu total, %zu read, %zu write, %zu error",
+              result.total_processed, result.read_processed,
+              result.write_processed, result.error_processed);
 }
 
 void EventLoop::HandleEvent(int fd, uint32_t events) {
