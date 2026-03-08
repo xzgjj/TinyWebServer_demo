@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wall -Wextra -g -fno-omit-frame-pointer -march=native -O0 -fsanitize=address -fsanitize=undefined -g -fsanitize=address -fsanitize=undefined CMakeFiles/server.dir/src/main.cpp.o -o server  libwebserver_core.a 

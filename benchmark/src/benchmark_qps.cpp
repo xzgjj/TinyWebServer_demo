@@ -278,7 +278,7 @@ public:
             system("echo '<h1>TinyWebServer Benchmark Test</h1>' > public/index.html");
             LOG_INFO("创建测试文件完成");
 
-            server = std::make_unique<Server>(config.server_host, config.server_port);
+            server = std::make_unique<Server>(config.server_host, config.server_port, PluginManager::GetInstance());
             // 设置消息处理回调（必须设置，否则服务器无法处理请求）
             server->SetOnMessage([](std::shared_ptr<Connection> conn, const std::string& data) {
                 LOG_INFO("基准测试服务器回调: 收到数据，连接fd=%d，数据大小=%zu",
@@ -577,7 +577,7 @@ public:
         bool test_success = false;
 
         try {
-            server = std::make_unique<Server>(config.server_host, config.server_port);
+            server = std::make_unique<Server>(config.server_host, config.server_port, PluginManager::GetInstance());
 
             // 设置消息处理回调（使用与main.cpp相同的逻辑）
             server->SetOnMessage([this](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
