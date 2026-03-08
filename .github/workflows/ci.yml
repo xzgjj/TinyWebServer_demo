@@ -90,19 +90,108 @@ jobs:
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
+
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake g++ ninja-build
+        sudo apt-get install -y cmake g++ ninja-build python3
+
     - name: Configure CMake
       run: >
         cmake -S . -B build -G Ninja
         -DCMAKE_BUILD_TYPE=Release
         -DBUILD_TESTING=ON
         -DBUILD_BENCHMARKS=ON
+
     - name: Build
       run: cmake --build build --parallel
-    - name: Run Quick Benchmark
+
+    - name: Restore Baseline from Cache
+      if: github.event_name == 'pull_request'
+      uses: actions/cache@v4
+      id: baseline-cache
+      with:
+        path: benchmark_results/baseline
+        key: benchmark-baseline-main-${{ hashFiles('CMakeLists.txt') }}
+        restore-keys: |
+          benchmark-baseline-main-
+
+    - name: Run All Benchmark Tests
       run: |
-        ./build/benchmark_runner list
-        ./build/benchmark_runner run --type qps --duration 5 --connections 10
+        # 创建当前结果目录
+        mkdir -p benchmark_results/current
+
+        # 运行四种基准测试类型
+        for benchmark_type in qps latency memory concurrent; do
+          echo "========================================="
+          echo "运行 $benchmark_type 基准测试..."
+          echo "========================================="
+
+          ./build/benchmark_runner run --type $benchmark_type \
+            --duration 10 \
+            --connections 50 \
+            --output benchmark_results/current/$benchmark_type
+
+          # 检查是否成功
+          if [ $? -eq 0 ]; then
+            echo "✅ $benchmark_type 基准测试完成"
+          else
+            echo "❌ $benchmark_type 基准测试失败"
+            # 不立即退出，继续其他测试
+          fi
+        done
+
+    - name: Compare with Baseline (PR only)
+      if: github.event_name == 'pull_request'
+      run: |
+        BASELINE_DIR="benchmark_results/baseline"
+        CURRENT_DIR="benchmark_results/current"
+
+        # 检查基线是否存在
+        if [ -d "$BASELINE_DIR" ] && [ "$(ls -A $BASELINE_DIR 2>/dev/null)" ]; then
+          echo "✅ 找到基线结果，开始性能回归检测..."
+
+          # 对每种测试类型进行对比
+          all_passed=true
+          for benchmark_type in qps latency memory concurrent; do
+            baseline_file="$BASELINE_DIR/$benchmark_type/result.json"
+            current_file="$CURRENT_DIR/$benchmark_type/result.json"
+
+            if [ -f "$baseline_file" ] && [ -f "$current_file" ]; then
+              echo "---------------------------------------------------------"
+              echo "对比 $benchmark_type 测试结果..."
+              echo "---------------------------------------------------------"
+
+              # 运行对比脚本
+              if python3 scripts/compare_benchmark.py \
+                "$baseline_file" \
+                "$current_file" \
+                --threshold 0.15 \
+                --fail-on-regression; then
+                echo "✅ $benchmark_type: 通过性能回归检测"
+              else
+                echo "❌ $benchmark_type: 检测到性能回归"
+                all_passed=false
+              fi
+            else
+              echo "⚠️  $benchmark_type: 缺少基线或当前结果文件"
+            fi
+          done
+
+          # 如果有任何测试失败，则整个job失败
+          if [ "$all_passed" = false ]; then
+            echo "::error::检测到性能回归，请检查基准测试结果"
+            exit 1
+          fi
+
+        else
+          echo "::warning::未找到基线结果，跳过性能回归检测"
+          echo "首次运行或基线未设置，需要先在main分支上运行基准测试建立基线"
+        fi
+
+    - name: Save Baseline to Cache
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/cache@v4
+      with:
+        path: benchmark_results/current
+        key: benchmark-baseline-main-${{ hashFiles('CMakeLists.txt') }}-${{ github.sha }}
