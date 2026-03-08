@@ -481,7 +481,12 @@ public:
         double avg_latency = 0;
         double p50_latency = 0;
         double p90_latency = 0;
+        double p95_latency = 0;
         double p99_latency = 0;
+        double p999_latency = 0;
+        double min_latency = 0;
+        double max_latency = 0;
+        double stddev_latency = 0;
 
         if (!latencies.empty()) {
             std::sort(latencies.begin(), latencies.end());
@@ -494,7 +499,12 @@ public:
 
             p50_latency = Statistics::CalculatePercentile(latencies, 50.0);
             p90_latency = Statistics::CalculatePercentile(latencies, 90.0);
+            p95_latency = Statistics::CalculatePercentile(latencies, 95.0);
             p99_latency = Statistics::CalculatePercentile(latencies, 99.0);
+            p999_latency = Statistics::CalculatePercentile(latencies, 99.9);
+            min_latency = Statistics::CalculateMin(latencies);
+            max_latency = Statistics::CalculateMax(latencies);
+            stddev_latency = Statistics::CalculateStdDev(latencies);
         }
 
         // 填充结果
@@ -512,7 +522,12 @@ public:
         result.metrics.push_back({"avg_latency", avg_latency, "ms", "平均延迟"});
         result.metrics.push_back({"p50_latency", p50_latency, "ms", "50%分位延迟"});
         result.metrics.push_back({"p90_latency", p90_latency, "ms", "90%分位延迟"});
+        result.metrics.push_back({"p95_latency", p95_latency, "ms", "95%分位延迟"});
         result.metrics.push_back({"p99_latency", p99_latency, "ms", "99%分位延迟"});
+        result.metrics.push_back({"p999_latency", p999_latency, "ms", "99.9%分位延迟"});
+        result.metrics.push_back({"min_latency", min_latency, "ms", "最小延迟"});
+        result.metrics.push_back({"max_latency", max_latency, "ms", "最大延迟"});
+        result.metrics.push_back({"stddev_latency", stddev_latency, "ms", "延迟标准差"});
         result.metrics.push_back({"concurrent_connections", static_cast<double>(config.concurrent_connections), "connections", "并发连接数"});
 
         // 清理阶段

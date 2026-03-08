@@ -284,7 +284,7 @@ int main(int argc, char* argv[]) {
     using namespace tinywebserver::benchmark;
 
     // 初始化日志，使用DEBUG级别以获取详细输出
-    Logger::GetInstance().Init("./benchmark_runner.log", LogLevel::LOG_LEVEL_DEBUG);
+    Logger::GetInstance().Init("./local/logs/benchmark_runner.log", LogLevel::LOG_LEVEL_DEBUG);
     LOG_INFO("基准测试运行器启动");
 
     if (argc < 2) {

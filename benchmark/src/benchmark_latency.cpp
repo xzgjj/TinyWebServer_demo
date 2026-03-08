@@ -222,8 +222,8 @@ public:
             for (double percentile : percentiles) {
                 double value = Statistics::CalculatePercentile(all_latencies, percentile);
                 std::string name = "p" + std::to_string(static_cast<int>(percentile));
-                if (percentile == 99.9) name = "p99_9";
-                if (percentile == 99.99) name = "p99_99";
+                if (percentile == 99.9) name = "p999";
+                if (percentile == 99.99) name = "p9999";
 
                 result.metrics.push_back({name + "_latency", value, "ms",
                                          std::to_string(static_cast<int>(percentile)) + "%分位延迟"});
