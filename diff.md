@@ -589,3 +589,55 @@ void KeepAliveManager::OnRequestStart(int fd, bool keep_alive, int idle_timeout)
 - ✅ 集成测试通过（除 test_main 外，14/15 通过，与基准测试无关）
 
 > **注意**：阶段五(v7.5)基准测试框架核心架构已实现并通过编译验证，支持四种测试类型。后续需完善服务器集成以支持实际性能测试运行。
+
+---
+
+## 2026-03-08 构建目录清理
+
+### 涉及文件
+1. `.gitignore` - 添加构建目录忽略规则
+2. `build_temp/` - 从git索引中移除的构建目录
+3. `build_temp_check/` - 从git索引中移除的构建目录
+
+### 核心 Diff 摘要
+#### 1. .gitignore 文件更新
+```diff
+ build/
++build_temp/
++build_temp_check/
+ bin/
+ *.o
+ *.a
+ *.so
+```
+
+#### 2. Git 命令执行
+```bash
+# 从git索引中移除构建目录，保留本地文件
+git rm -r --cached build_temp/
+git rm -r --cached build_temp_check/
+git add .gitignore
+git commit -m "chore: exclude build_temp directories from git tracking"
+git push
+```
+
+#### 3. 提交信息
+```
+chore: exclude build_temp directories from git tracking
+
+- Add build_temp/ and build_temp_check/ to .gitignore
+- Remove previously committed build artifacts from git index
+- Keep local build directories for development but prevent accidental commits
+```
+
+### 修改意图
+1. **清理仓库**：移除不应提交的构建产物，减小仓库体积
+2. **防止误提交**：通过.gitignore规则防止未来意外提交构建文件
+3. **保持开发便利**：本地构建目录保持不变，仅停止git跟踪
+4. **符合最佳实践**：构建产物和临时文件不应进入版本控制
+
+### 验证状态
+- ✅ `.gitignore` 更新生效，未来构建文件不会进入git
+- ✅ 构建目录已从git索引中移除（`git status`不再显示）
+- ✅ 本地构建目录保持不变，不影响开发构建
+- ✅ 更改已推送到远程仓库（`git push`成功）

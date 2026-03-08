@@ -556,3 +556,18 @@ python3 tools.py benchmark baseline
 
 ### 上下文断点（当前状态）
 **最后一条关键信息**：阶段五(v7.5)插件系统框架已完成并通过编译验证，示例插件成功加载。服务器现在支持插件扩展，事件通知在连接生命周期和请求处理流程中触发。剩余工作：基准测试框架完善（CI/CD集成、性能回归检测）。
+
+---
+
+### 本次增量记录
+- 2026-03-08：修复构建目录git跟踪问题
+  - 添加 `build_temp/` 和 `build_temp_check/` 到 `.gitignore` 文件
+  - 从git索引中移除已提交的构建产物（保留本地文件）
+  - 提交更改并推送到远程仓库，防止未来意外提交构建文件
+
+#### Git Commit 记录
+- 2026-03-08 commit `a97e8a4`: 修复构建目录git跟踪问题
+  - 添加 `build_temp/` 和 `build_temp_check/` 到 `.gitignore`
+  - 从git索引中移除构建目录及其内容（`git rm -r --cached`）
+  - 保持本地构建目录不变，仅停止git跟踪
+  - 提交信息：`chore: exclude build_temp directories from git tracking`
