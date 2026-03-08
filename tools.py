@@ -428,6 +428,131 @@ def create_baseline():
 
     return all_success
 
+
+# --- 日志清理功能 ---
+def clean_logs(
+    keep_days: int = 7,
+    keep_max_files_per_dir: int = 20,
+    keep_failed_logs: bool = True,
+    dry_run: bool = False
+):
+    """
+    定期清理日志文件，权衡保留重要信息与磁盘空间
+
+    Args:
+        keep_days: 保留最近N天的日志文件（按修改时间）
+        keep_max_files_per_dir: 每个目录最多保留的文件数（按修改时间排序）
+        keep_failed_logs: 是否特别保留测试失败的日志（即使超过保留期限）
+        dry_run: 仅打印将要删除的文件，而不实际删除
+    """
+    import time
+    current_time = time.time()
+    cutoff_time = current_time - (keep_days * 24 * 3600)
+
+    # 定义要扫描的日志目录模式
+    log_patterns = [
+        ROOT_DIR / "build" / "test_logs" / "*.log",
+        ROOT_DIR / "local" / "logs" / "*.log",
+        ROOT_DIR / "benchmark_results" / "**" / "*.json",
+        ROOT_DIR / "benchmark_results" / "**" / "*.csv",
+        ROOT_DIR / "benchmark_results" / "**" / "*.log",
+        ROOT_DIR / "Testing" / "Temporary" / "*.log",
+    ]
+
+    # 审计报告保留策略不同（保留最近5份）
+    audit_report = ROOT_DIR / "audit_report.md"
+
+    deleted_count = 0
+    preserved_failed = 0
+
+    for pattern in log_patterns:
+        # 使用 glob 递归匹配文件
+        import glob
+        for file_path in glob.glob(str(pattern), recursive=True):
+            file_path = Path(file_path)
+            if not file_path.is_file():
+                continue
+
+            # 检查文件是否包含失败标记（如果启用保留失败日志）
+            is_failed_log = False
+            if keep_failed_logs and file_path.suffix == '.log':
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read(4096)  # 只读取前4KB
+                        if any(marker in content for marker in ["FAIL", "ERROR", "Assertion", "AddressSanitizer", "内存错误", "失败"]):
+                            is_failed_log = True
+                except Exception:
+                    pass
+
+            # 获取文件修改时间
+            mtime = file_path.stat().st_mtime
+
+            # 决定是否删除
+            delete_reason = None
+            if is_failed_log:
+                preserved_failed += 1
+                continue  # 保留失败日志
+
+            if mtime < cutoff_time:
+                delete_reason = f"超过{keep_days}天"
+            else:
+                # 检查目录内文件数量限制
+                parent_dir = file_path.parent
+                sibling_files = list(parent_dir.glob("*" + file_path.suffix))
+                sibling_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+                # 如果文件不在最近 keep_max_files_per_dir 个文件中，则删除
+                if len(sibling_files) > keep_max_files_per_dir and file_path in sibling_files[keep_max_files_per_dir:]:
+                    delete_reason = f"超出目录限制{keep_max_files_per_dir}个文件"
+
+            if delete_reason:
+                if dry_run:
+                    print(f"[DRY RUN] 将删除: {file_path.relative_to(ROOT_DIR)} ({delete_reason})")
+                else:
+                    try:
+                        file_path.unlink()
+                        print(f">> 已删除: {file_path.relative_to(ROOT_DIR)} ({delete_reason})")
+                        deleted_count += 1
+                    except Exception as e:
+                        print(f">> 删除失败 {file_path}: {e}")
+
+    # 审计报告保留策略：保留最近5份，备份旧版本
+    if audit_report.exists():
+        backup_dir = ROOT_DIR / "audit_report_backups"
+        backup_dir.mkdir(exist_ok=True)
+
+        # 获取所有备份文件
+        backups = list(backup_dir.glob("audit_report_*.md"))
+        backups.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+        # 如果当前审计报告比最新备份新，则创建备份
+        if not backups or audit_report.stat().st_mtime > backups[0].stat().st_mtime:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = backup_dir / f"audit_report_{timestamp}.md"
+            if not dry_run:
+                shutil.copy2(audit_report, backup_path)
+                print(f">> 已备份审计报告: {backup_path.relative_to(ROOT_DIR)}")
+            else:
+                print(f"[DRY RUN] 将备份审计报告到: {backup_path.relative_to(ROOT_DIR)}")
+
+        # 清理多余的备份（保留最近5个）
+        if len(backups) >= 5:
+            for old_backup in backups[4:]:
+                if dry_run:
+                    print(f"[DRY RUN] 将删除旧备份: {old_backup.relative_to(ROOT_DIR)}")
+                else:
+                    old_backup.unlink()
+                    print(f">> 已删除旧备份: {old_backup.relative_to(ROOT_DIR)}")
+                    deleted_count += 1
+
+    print(f"\n>> 日志清理完成:")
+    print(f"   - 删除了 {deleted_count} 个文件")
+    print(f"   - 保留了 {preserved_failed} 个失败日志")
+    if dry_run:
+        print(f"   - 此次为模拟运行，未实际删除")
+
+    return deleted_count
+
 def main():
     parser = argparse.ArgumentParser(description="TinyWebServer 辅助工具 - 性能审计版")
     subparsers = parser.add_subparsers(dest="command")
@@ -448,6 +573,12 @@ def main():
     debug_p.add_argument("-target", required=True, help="测试目标名称")
 
     clean_p = subparsers.add_parser("clean", help="仅清理构建目录")
+
+    clean_logs_p = subparsers.add_parser("clean-logs", help="定期清理日志文件，保留重要信息")
+    clean_logs_p.add_argument("--keep-days", type=int, default=7, help="保留最近N天的日志文件（默认：7）")
+    clean_logs_p.add_argument("--keep-max-files", type=int, default=20, help="每个目录最多保留的文件数（默认：20）")
+    clean_logs_p.add_argument("--no-keep-failed", action="store_true", help="不特别保留测试失败的日志")
+    clean_logs_p.add_argument("--dry-run", action="store_true", help="仅打印将要删除的文件，而不实际删除")
 
     # 基准测试命令
     benchmark_p = subparsers.add_parser("benchmark", help="运行性能基准测试")
@@ -492,6 +623,13 @@ def main():
         debug(args.target)
     elif args.command == "clean":
         clean()
+    elif args.command == "clean-logs":
+        clean_logs(
+            keep_days=args.keep_days,
+            keep_max_files_per_dir=args.keep_max_files,
+            keep_failed_logs=not args.no_keep_failed,
+            dry_run=args.dry_run
+        )
     elif args.command == "benchmark":
         if args.benchmark_command == "run":
             success = run_benchmark(

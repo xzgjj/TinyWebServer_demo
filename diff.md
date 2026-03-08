@@ -1,5 +1,7 @@
 # Diff 记录 - TinyWebServer 关键代码修改
 
+
+
 ## 2026-03-06 (阶段一完成)
 ### 涉及文件
 1. `include/connection.h` - Connection 状态机扩展
@@ -88,7 +90,10 @@
 
 ---
 
+
+
 ## 2026-03-06 22:03:38
+
 ### 涉及文件
 1. `implementation_plan.md` (新建)
 2. `CLAUDE.md` (更新)
@@ -166,7 +171,10 @@
 
 ---
 
+
+
 ## 2026-03-06 21:38:23
+
 ### 涉及文件
 1. `.github/workflows/ci.yml`
 2. `CMakeLists.txt`
@@ -344,6 +352,8 @@
 
 ---
 
+
+
 ## 2026-03-07 阶段四 (v7.4) 安全验证集成完成
 
 ### 涉及文件
@@ -436,6 +446,8 @@ int main() {
 - ✅ 配置化根目录功能正常（从配置文件读取或使用默认值）
 
 ---
+
+
 
 ## 2026-03-07 阶段四 (v7.4) 完成：Keep-Alive 管理与条件请求支持
 
@@ -547,6 +559,8 @@ void KeepAliveManager::OnRequestStart(int fd, bool keep_alive, int idle_timeout)
 
 ---
 
+
+
 ## 2026-03-07 阶段五 (v7.5) 基准测试框架编译修复
 
 ### 涉及文件
@@ -591,6 +605,8 @@ void KeepAliveManager::OnRequestStart(int fd, bool keep_alive, int idle_timeout)
 > **注意**：阶段五(v7.5)基准测试框架核心架构已实现并通过编译验证，支持四种测试类型。后续需完善服务器集成以支持实际性能测试运行。
 
 ---
+
+
 
 ## 2026-03-08 构建目录清理
 
@@ -644,6 +660,8 @@ chore: exclude build_temp directories from git tracking
 
 ---
 
+
+
 ## 2026-03-08 工具脚本优化：统一构建目录清理
 
 ### 涉及文件
@@ -688,3 +706,125 @@ def clean():
 - ✅ clean()函数逻辑正确，安全删除目录
 - ✅ 用户反馈信息清晰，显示已清理的目录
 - ✅ 保持与现有工作流的兼容性
+
+---
+
+## 2026-03-08 工具脚本扩展：定期日志清理功能
+
+### 涉及文件
+1. `tools.py` - 添加 `clean_logs()` 函数和 `clean-logs` 子命令
+
+### 核心 Diff 摘要
+#### 1. clean_logs() 函数实现（智能清理策略）
+```diff
++def clean_logs(
++    keep_days: int = 7,
++    keep_max_files_per_dir: int = 20,
++    keep_failed_logs: bool = True,
++    dry_run: bool = False
++):
++    """
++    定期清理日志文件，权衡保留重要信息与磁盘空间
++
++    Args:
++        keep_days: 保留最近N天的日志文件（按修改时间）
++        keep_max_files_per_dir: 每个目录最多保留的文件数（按修改时间排序）
++        keep_failed_logs: 是否特别保留测试失败的日志（即使超过保留期限）
++        dry_run: 仅打印将要删除的文件，而不实际删除
++    """
++    import time
++    current_time = time.time()
++    cutoff_time = current_time - (keep_days * 24 * 3600)
++
++    # 定义要扫描的日志目录模式
++    log_patterns = [
++        ROOT_DIR / "build" / "test_logs" / "*.log",
++        ROOT_DIR / "local" / "logs" / "*.log",
++        ROOT_DIR / "benchmark_results" / "**" / "*.json",
++        ROOT_DIR / "benchmark_results" / "**" / "*.csv",
++        ROOT_DIR / "benchmark_results" / "**" / "*.log",
++        ROOT_DIR / "Testing" / "Temporary" / "*.log",
++    ]
+```
+
+#### 2. 命令行参数解析扩展
+```diff
++    clean_logs_p = subparsers.add_parser("clean-logs", help="定期清理日志文件，保留重要信息")
++    clean_logs_p.add_argument("--keep-days", type=int, default=7, help="保留最近N天的日志文件（默认：7）")
++    clean_logs_p.add_argument("--keep-max-files", type=int, default=20, help="每个目录最多保留的文件数（默认：20）")
++    clean_logs_p.add_argument("--no-keep-failed", action="store_true", help="不特别保留测试失败的日志")
++    clean_logs_p.add_argument("--dry-run", action="store_true", help="仅打印将要删除的文件，而不实际删除")
+```
+
+#### 3. 失败日志保护机制
+```diff
++            # 检查文件是否包含失败标记（如果启用保留失败日志）
++            is_failed_log = False
++            if keep_failed_logs and file_path.suffix == '.log':
++                try:
++                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
++                        content = f.read(4096)  # 只读取前4KB
++                        if any(marker in content for marker in ["FAIL", "ERROR", "Assertion", "AddressSanitizer", "内存错误", "失败"]):
++                            is_failed_log = True
++                except Exception:
++                    pass
++
++            # 获取文件修改时间
++            mtime = file_path.stat().st_mtime
++
++            # 决定是否删除
++            delete_reason = None
++            if is_failed_log:
++                preserved_failed += 1
++                continue  # 保留失败日志
+```
+
+#### 4. 审计报告自动备份
+```diff
++    # 审计报告保留策略：保留最近5份，备份旧版本
++    if audit_report.exists():
++        backup_dir = ROOT_DIR / "audit_report_backups"
++        backup_dir.mkdir(exist_ok=True)
++
++        # 获取所有备份文件
++        backups = list(backup_dir.glob("audit_report_*.md"))
++        backups.sort(key=lambda p: p.stat().st_mtime, reverse=True)
++
++        # 如果当前审计报告比最新备份新，则创建备份
++        if not backups or audit_report.stat().st_mtime > backups[0].stat().st_mtime:
++            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
++            backup_path = backup_dir / f"audit_report_{timestamp}.md"
++            if not dry_run:
++                shutil.copy2(audit_report, backup_path)
++                print(f">> 已备份审计报告: {backup_path.relative_to(ROOT_DIR)}")
+```
+
+### 修改意图
+1. **智能清理策略**：实现时间保留（7天）+ 数量限制（20个/目录）+ 失败保护三重维度，避免单一策略过激进或保守
+2. **重要性优先**：自动检测失败标记（`FAIL`、`ERROR`、`Assertion`、`AddressSanitizer`、`内存错误`、`失败`），保留调试关键信息
+3. **安全第一设计**：支持 `--dry-run` 预览模式，避免误删除；审计报告自动备份，保留最近5个版本
+4. **目录隔离原则**：每个目录独立计数，避免跨目录误删；按文件扩展名分组限制数量
+5. **使用便捷**：提供合理默认值，支持参数调整，与现有 `tools.py` 工作流无缝集成
+
+### 使用方式
+```bash
+# 默认清理（保留7天，每目录20个文件，保护失败日志）
+python3 tools.py clean-logs
+
+# 调整参数：保留3天，每目录10个文件
+python3 tools.py clean-logs --keep-days 3 --keep-max-files 10
+
+# 不保护失败日志
+python3 tools.py clean-logs --no-keep-failed
+
+# 预览模式（不实际删除）
+python3 tools.py clean-logs --dry-run
+```
+
+### 验证状态
+- ✅ `clean_logs()` 函数语法正确，逻辑完整
+- ✅ 命令行参数解析正常，帮助信息清晰
+- ✅ `--dry-run` 预览模式正常工作，显示将要删除的文件和原因
+- ✅ 失败日志保护机制有效，检测常见失败标记
+- ✅ 审计报告自动备份功能正常，避免重要信息丢失
+- ✅ 保持向后兼容，不影响现有 `tools.py` 其他功能
