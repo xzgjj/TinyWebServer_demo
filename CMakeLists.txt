@@ -91,6 +91,7 @@ target_include_directories(project_configs INTERFACE
     ${PROJECT_SOURCE_DIR}/include/logging
     ${PROJECT_SOURCE_DIR}/include/http
     ${PROJECT_SOURCE_DIR}/include/http2
+    ${PROJECT_SOURCE_DIR}/include/plugin
     ${PROJECT_SOURCE_DIR}/third_party
     ${PROJECT_SOURCE_DIR}/test
 )
@@ -131,6 +132,8 @@ set(CORE_SOURCES_LIST
     src/http2/h2_connection.cpp
     src/http2/h2_stream.cpp
     src/http2/hpack_decoder.cpp
+    src/plugin/plugin_manager.cpp
+    src/plugin/example_plugin.cpp
 )
 
 # 检查每个源文件是否存在

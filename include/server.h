@@ -15,6 +15,7 @@
 #include "connection.h"
 #include "config/server_config.h"
 #include "http/keep_alive_manager.h"
+#include "plugin/plugin_manager.h"
 
 namespace tinywebserver {
 class ServerConfig;
@@ -31,8 +32,10 @@ public:
     };
 
     Server(const std::string& ip, int port,
+           PluginManager& plugin_manager,
            const SOReusePortOptions& reuseport_opts = SOReusePortOptions{});
-    explicit Server(const std::shared_ptr<tinywebserver::ServerConfig>& config);
+    Server(const std::shared_ptr<tinywebserver::ServerConfig>& config,
+           PluginManager& plugin_manager = PluginManager::GetInstance());
     ~Server();
     void Start();
     void Stop();
@@ -47,6 +50,15 @@ public:
     tinywebserver::KeepAliveManager* GetKeepAliveManager() const {
         return keep_alive_manager_.get();
     }
+
+    // 插件管理
+    PluginManager& GetPluginManager() const { return plugin_manager_; }
+
+    /**
+     * @brief 加载所有已注册的插件
+     * @return 成功加载的插件数量
+     */
+    size_t LoadPlugins();
 
     void SetupConnectionInLoop(std::shared_ptr<Connection> conn);
     void RemoveConnection(int fd);
@@ -71,6 +83,7 @@ private:
     std::unordered_map<int, std::shared_ptr<Connection>> connections_;
     std::shared_ptr<tinywebserver::ServerConfig> config_;
     std::unique_ptr<tinywebserver::KeepAliveManager> keep_alive_manager_;
+    PluginManager& plugin_manager_;
 
     // SO_REUSEPORT 相关成员
     SOReusePortOptions reuseport_opts_;

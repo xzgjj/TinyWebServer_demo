@@ -13,6 +13,8 @@
 #include "request_validator.h"
 #include "config/server_config.h"
 #include "logging/structured_logger.h"
+#include "plugin/plugin_manager.h"
+#include "plugin/example_plugin.h"
 
 int main(int argc, char* argv[]) {
     std::string config_file;
@@ -49,14 +51,14 @@ int main(int argc, char* argv[]) {
             std::cerr << "Failed to load configuration from " << config_file << std::endl;
             return 1;
         }
-        server = std::make_unique<Server>(config);
+        server = std::make_unique<Server>(config, PluginManager::GetInstance());
         LOG_INFO("Server configured from file: %s", config_file.c_str());
 
         // 初始化结构化日志系统
         tinywebserver::InitStructuredLoggerFromConfig(config);
     } else {
         // 默认配置
-        server = std::make_unique<Server>("0.0.0.0", 8080);
+        server = std::make_unique<Server>("0.0.0.0", 8080, PluginManager::GetInstance());
         // 创建默认配置对象以获取默认值
         config = std::make_shared<tinywebserver::ServerConfig>();
     }
@@ -69,7 +71,13 @@ int main(int argc, char* argv[]) {
         keep_alive_timeout = config->GetLimitsOptions().keep_alive_timeout;
     }
 
-    server->SetOnMessage([static_root, keep_alive_timeout](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
+    // 注册并加载插件
+    PluginManager& plugin_manager = PluginManager::GetInstance();
+    plugin_manager.RegisterPlugin<ExamplePlugin>();
+    server->LoadPlugins();
+
+    auto* server_ptr = server.get();
+    server->SetOnMessage([static_root, keep_alive_timeout, server_ptr](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
         auto parser = conn->GetHttpParser();
         auto& buffer = conn->GetInputBuffer();
 
@@ -83,6 +91,9 @@ int main(int argc, char* argv[]) {
             if (parser->Parse(buffer)) {
                 // Keep-Alive 管理：通知连接开始处理请求
                 conn->OnRequestStart(parser->IsKeepAlive(), keep_alive_timeout);
+
+                // 插件事件：请求开始
+                server_ptr->GetPluginManager().NotifyRequestStart(*parser);
 
                 // 请求安全验证
                 tinywebserver::RequestValidator validator(static_root);
@@ -112,6 +123,9 @@ int main(int argc, char* argv[]) {
                     response.Init(static_root, validation_result.normalized_path, parser->IsKeepAlive(), -1, parser.get());
                     response.MakeResponse();
                 }
+
+                // 插件事件：请求完成
+                server_ptr->GetPluginManager().NotifyRequestComplete(*parser, response);
 
                 // 异步发送：Reactor 会处理发送队列
                 conn->Send(response.GetHeaderString());
