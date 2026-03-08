@@ -5,6 +5,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fstream>
 #include "server.h"
 #include "http_response.h"
 #include "http_request.h"
@@ -32,12 +33,30 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 1. 确保环境收敛：创建资源目录
+    // 1. 确保环境收敛：创建资源目录（构建时已创建，此处作为后备）
     struct stat st;
     if (stat("./public", &st) != 0) {
         mkdir("./public", 0755);
-        // 创建默认首页以防 404 导致集成测试失败
-        system("echo '<h1>TinyWebServer V3</h1>' > ./public/index.html");
+    }
+    // 确保默认首页存在（构建时已创建，此处作为后备）
+    if (stat("./public/index.html", &st) != 0) {
+        // 使用C++文件操作替代system调用
+        std::ofstream index_file("./public/index.html");
+        if (index_file.is_open()) {
+            index_file << "<h1>TinyWebServer V3</h1>";
+            index_file.close();
+        }
+    }
+
+    // 2. 确保日志目录存在（构建时已创建，此处作为后备）
+    if (stat("./local", &st) != 0) {
+        mkdir("./local", 0755);
+    }
+    if (stat("./local/logs", &st) != 0) {
+        mkdir("./local/logs", 0755);
+    }
+    if (stat("./local/logs/benchmark", &st) != 0) {
+        mkdir("./local/logs/benchmark", 0755);
     }
 
     Logger::GetInstance().Init("./local/logs/tiny_server.log", LogLevel::LOG_LEVEL_DEBUG);
@@ -120,7 +139,12 @@ int main(int argc, char* argv[]) {
                              validation_result.error.ToString().c_str(), error_code);
                 } else {
                     // 验证成功，使用规范化路径
-                    response.Init(static_root, validation_result.normalized_path, parser->IsKeepAlive(), -1, parser.get());
+                    // 确保路径以斜杠开头，以便正确拼接
+                    std::string normalized_path = validation_result.normalized_path;
+                    if (!normalized_path.empty() && normalized_path[0] != '/') {
+                        normalized_path = "/" + normalized_path;
+                    }
+                    response.Init(static_root, normalized_path, parser->IsKeepAlive(), -1, parser.get());
                     response.MakeResponse();
                 }
 
