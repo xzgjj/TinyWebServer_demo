@@ -556,8 +556,8 @@ std::vector<std::string> GetAvailableBenchmarkTypes();
 int main(int argc, char* argv[]) {
     using namespace tinywebserver::benchmark;
 
-    // 初始化日志，使用DEBUG级别以获取详细输出
-    Logger::GetInstance().Init("./local/logs/benchmark_runner.log", LogLevel::LOG_LEVEL_DEBUG);
+    // 初始化日志，使用INFO级别以减少日志量（DEBUG级别会产生大量输出）
+    Logger::GetInstance().Init("./local/logs/benchmark_runner.log", LogLevel::LOG_LEVEL_INFO);
     LOG_INFO("基准测试运行器启动");
 
     if (argc < 2) {
