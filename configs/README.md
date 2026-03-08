@@ -11,6 +11,8 @@ TinyWebServer 使用 JSON 格式的配置文件，支持以下配置节：
 - `backlog`: listen() backlog 参数 (默认: 1024)
 - `tcp_nodelay`: 启用 TCP_NODELAY (默认: true)
 - `tcp_cork`: 启用 TCP_CORK (默认: false)
+- `use_so_reuseport`: 启用 SO_REUSEPORT 多队列优化 (默认: false)
+- `so_reuseport_sockets`: SO_REUSEPORT 监听socket数量，0表示等于线程数 (默认: 0)
 
 ### 2. 资源限制 (`limits`)
 - `max_connections`: 最大并发连接数 (默认: 10000)
@@ -69,4 +71,37 @@ GET /admin/config
 
 ## 示例
 
-见 `server.example.json` 文件。
+- 基础配置: `server.example.json`
+- SO_REUSEPORT 优化配置: `server.so_reuseport.example.json`
+
+## SO_REUSEPORT 优化说明
+
+### 什么是 SO_REUSEPORT？
+SO_REUSEPORT 是 Linux 3.9+ 引入的 socket 选项，允许多个 socket 绑定到相同的 IP 地址和端口。内核负责在多个监听 socket 之间负载均衡传入连接。
+
+### 传统模式 vs SO_REUSEPORT 模式
+- **传统模式**: 单个监听 socket，由 Main Reactor 接受连接后分配给 Sub Reactor
+- **SO_REUSEPORT 模式**: 每个 Sub Reactor 拥有自己的监听 socket，直接接受连接
+
+### 性能优势
+1. **消除单点瓶颈**: 无 Main Reactor accept 竞争
+2. **内核级负载均衡**: Linux 内核将连接分配到不同监听 socket
+3. **更好的缓存局部性**: 连接直接在接受的线程中处理
+4. **减少锁竞争**: 无需跨线程分配连接
+
+### 使用建议
+- **高并发场景**: 连接建立速率 > 10,000/秒时效果显著
+- **Linux 3.9+**: 需要较新内核版本
+- **CPU 密集型**: 当 CPU 核心数 >= 4 时推荐启用
+- **监控**: 启用后监控各个线程的连接分布
+
+### 配置示例
+```json
+{
+  "server": {
+    "use_so_reuseport": true,
+    "so_reuseport_sockets": 0,  // 0 = 等于线程数
+    "threads": 8
+  }
+}
+```

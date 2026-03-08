@@ -122,6 +122,8 @@ set(CORE_SOURCES_LIST
     reactor/event_loop_thread.cpp
     reactor/event_loop_thread_pool.cpp
     reactor/socket_utils.cpp
+    reactor/multi_listen_socket.cpp
+    reactor/batch_io_handler.cpp
     src/request_validator.cpp
     src/http/keep_alive_manager.cpp
     src/http/conditional_request_handler.cpp
@@ -207,6 +209,9 @@ if(BUILD_TESTING)
         test_keep_alive
         test_conditional_request
         test_memory_pool
+        test_multi_listen_socket
+        test_batch_io_handler
+        test_so_reuseport_integration
     )
 
     # 适合 CI 的快速冒烟集

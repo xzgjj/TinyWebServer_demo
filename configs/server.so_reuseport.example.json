@@ -1,0 +1,44 @@
+{
+  "server": {
+    "ip": "0.0.0.0",
+    "port": 8080,
+    "threads": 8,
+    "backlog": 1024,
+    "tcp_nodelay": true,
+    "tcp_cork": false,
+    "use_so_reuseport": true,
+    "so_reuseport_sockets": 0  // 0表示等于线程数（8个监听socket）
+  },
+  "limits": {
+    "max_connections": 50000,
+    "max_request_size": 65536,
+    "max_response_size": 1048576,
+    "connection_timeout": 30,
+    "keep_alive_timeout": 15,
+    "max_input_buffer": 65536,
+    "max_output_buffer": 1048576
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "logs/server.so_reuseport.log",
+    "async": true,
+    "queue_size": 10000,
+    "flush_interval": 3
+  },
+  "static": {
+    "root": "./public",
+    "cache_size": 100,
+    "cache_ttl": 300
+  },
+  "metrics": {
+    "enable_prometheus": true,
+    "prometheus_port": 9090,
+    "collect_interval": 5
+  },
+  "_comment": "SO_REUSEPORT 配置说明：",
+  "_comment2": "1. use_so_reuseport: true 启用多监听socket优化",
+  "_comment3": "2. so_reuseport_sockets: 0 表示使用与线程数相同的socket数量",
+  "_comment4": "3. 需要 Linux 3.9+ 内核支持 SO_REUSEPORT 选项",
+  "_comment5": "4. 此模式适用于高并发场景，消除单点accept瓶颈",
+  "_comment6": "5. 每个Sub Reactor线程拥有独立的监听socket，内核负责负载均衡"
+}

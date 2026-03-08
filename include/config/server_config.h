@@ -28,6 +28,8 @@ public:
         int backlog = 1024;
         bool tcp_nodelay = true;
         bool tcp_cork = false;
+        bool use_so_reuseport = false;      // 启用 SO_REUSEPORT 多队列优化
+        int so_reuseport_sockets = 0;       // SO_REUSEPORT 监听socket数量，0表示等于线程数
     };
 
     // 资源限制配置

@@ -141,6 +141,13 @@ std::vector<std::string> ServerConfig::Validate() const {
         errors.push_back("Backlog cannot exceed 65535");
     }
 
+    if (server_.so_reuseport_sockets < 0) {
+        errors.push_back("SO_REUSEPORT sockets count cannot be negative");
+    }
+    if (server_.so_reuseport_sockets > 64) {
+        errors.push_back("SO_REUSEPORT sockets count cannot exceed 64");
+    }
+
     // limits 配置验证
     if (limits_.max_connections < 1) {
         errors.push_back("Max connections must be at least 1");
@@ -250,6 +257,8 @@ std::string ServerConfig::ToJsonString() const {
         server_json["backlog"] = server_.backlog;
         server_json["tcp_nodelay"] = server_.tcp_nodelay;
         server_json["tcp_cork"] = server_.tcp_cork;
+        server_json["use_so_reuseport"] = server_.use_so_reuseport;
+        server_json["so_reuseport_sockets"] = server_.so_reuseport_sockets;
         j["server"] = server_json;
 
         // limits
@@ -315,6 +324,12 @@ bool ServerConfig::LoadFromJsonObject(const nlohmann::json& j) {
             }
             if (server.contains("tcp_cork") && server["tcp_cork"].is_boolean()) {
                 server_.tcp_cork = server["tcp_cork"];
+            }
+            if (server.contains("use_so_reuseport") && server["use_so_reuseport"].is_boolean()) {
+                server_.use_so_reuseport = server["use_so_reuseport"];
+            }
+            if (server.contains("so_reuseport_sockets") && server["so_reuseport_sockets"].is_number_integer()) {
+                server_.so_reuseport_sockets = server["so_reuseport_sockets"];
             }
         }
 

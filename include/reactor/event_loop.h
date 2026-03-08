@@ -17,6 +17,7 @@
 #include <unordered_map>
 
 #include "timer/timer_wheel.h"
+#include "reactor/batch_io_handler.h"
 
 /**
  * @brief 核心事件循环类 (One Loop Per Thread)
@@ -91,6 +92,9 @@ private:
     
     // 记录已注册的文件描述符
     std::unordered_map<int, uint32_t> registered_fds_;
+
+    // 批量 I/O 处理
+    BatchIOHandler batch_io_handler_;
 
     // 定时器管理
     tinywebserver::TimerWheel timer_wheel_;
