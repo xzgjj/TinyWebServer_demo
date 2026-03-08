@@ -81,34 +81,34 @@ struct BenchmarkConfig {
     std::string description;
 
     /// 测试持续时间（秒），0表示运行一次
-    double duration_seconds;
+    double duration_seconds = 10.0;
 
     /// 并发连接数
-    int concurrent_connections;
+    int concurrent_connections = 100;
 
     /// 目标QPS（0表示尽力而为）
-    int target_qps;
+    int target_qps = 0;
 
     /// 服务器地址
-    std::string server_host;
+    std::string server_host = "127.0.0.1";
 
     /// 服务器端口
-    int server_port;
+    int server_port = 8080;
 
     /// 请求路径
-    std::string request_path;
+    std::string request_path = "/index.html";
 
     /// 请求方法
-    std::string request_method;
+    std::string request_method = "GET";
 
     /// 请求体（如果有）
     std::string request_body;
 
     /// 是否启用Keep-Alive
-    bool keep_alive;
+    bool keep_alive = true;
 
     /// 是否收集详细的时间序列数据
-    bool collect_time_series;
+    bool collect_time_series = false;
 
     /// 自定义配置参数
     std::vector<std::pair<std::string, std::string>> custom_params;

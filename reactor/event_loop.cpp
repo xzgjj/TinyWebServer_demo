@@ -116,6 +116,7 @@ void EventLoop::UpdateEvent(int fd, uint32_t events) {
                 return;
             }
             registered_fds_[fd] = events;
+            LOG_INFO("EventLoop::UpdateEvent: ADD fd=%d events=0x%x", fd, events);
         } else {
             // 修改
             if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev) < 0) {
@@ -123,6 +124,7 @@ void EventLoop::UpdateEvent(int fd, uint32_t events) {
                 return;
             }
             registered_fds_[fd] = events;
+            LOG_INFO("EventLoop::UpdateEvent: MOD fd=%d events=0x%x", fd, events);
         }
     } else {
         // 2. 如果不在 IO 线程，通过 RunInLoop 将操作转移（Dispatch）到 IO 线程执行
@@ -190,6 +192,12 @@ void EventLoop::ProcessEvents(int timeout_ms) {
         }
         return;
     }
+    if (num_events > 0) {
+        LOG_INFO("EventLoop::ProcessEvents: %d events returned", num_events);
+        for (int i = 0; i < num_events; ++i) {
+            LOG_INFO("  event[%d]: fd=%d, events=0x%x", i, events_[i].data.fd, events_[i].events);
+        }
+    }
     
     for (int i = 0; i < num_events; ++i) {
         int fd = events_[i].data.fd;
@@ -206,8 +214,11 @@ void EventLoop::ProcessEvents(int timeout_ms) {
 }
 
 void EventLoop::HandleEvent(int fd, uint32_t events) {
+    LOG_INFO("EventLoop::HandleEvent: fd=%d, events=0x%x, read_callbacks_ has %lu entries",
+             fd, events, read_callbacks_.size());
     // 根据事件类型调用相应的回调
     if ((events & EPOLLIN) && read_callbacks_.count(fd)) {
+        LOG_INFO("EventLoop::HandleEvent: calling read callback for fd=%d", fd);
         read_callbacks_[fd](fd);
     }
     if ((events & EPOLLOUT) && write_callbacks_.count(fd)) {

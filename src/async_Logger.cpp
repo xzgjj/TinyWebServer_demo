@@ -55,6 +55,7 @@ bool AsyncLogger::Append(const char* log_line, size_t len)
     {
         buffers_.push_back(std::move(current_buffer_));
         cond_.notify_one();
+        
     }
 
     // 使用备用缓冲区

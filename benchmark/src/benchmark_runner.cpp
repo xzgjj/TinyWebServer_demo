@@ -253,14 +253,16 @@ void PrintHelp() {
     std::cout << "  list     列出可用的基准测试类型\n";
     std::cout << "  help     显示此帮助信息\n\n";
     std::cout << "运行命令选项:\n";
-    std::cout << "  --type <type>          基准测试类型 (qps, latency, memory)\n";
+    std::cout << "  --type <type>          基准测试类型 (qps, latency, memory, concurrent)\n";
     std::cout << "  --config <file>        配置文件路径\n";
     std::cout << "  --output <dir>         输出目录 (默认: benchmark_results/<timestamp>)\n";
     std::cout << "  --baseline <dir>       基线结果目录，用于对比\n";
     std::cout << "  --duration <seconds>   测试持续时间 (默认: 10)\n";
     std::cout << "  --connections <num>    并发连接数 (默认: 100)\n";
     std::cout << "  --host <host>          服务器地址 (默认: 127.0.0.1)\n";
-    std::cout << "  --port <port>          服务器端口 (默认: 8080)\n\n";
+    std::cout << "  --port <port>          服务器端口 (默认: 8080)\n";
+    std::cout << "  --path <path>          请求路径 (默认: /index.html)\n";
+    std::cout << "  --method <method>      请求方法 (默认: GET)\n\n";
     std::cout << "示例:\n";
     std::cout << "  benchmark_runner run --type qps --duration 30 --connections 1000\n";
     std::cout << "  benchmark_runner run --config configs/benchmark/qps_config.json\n";

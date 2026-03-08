@@ -6,6 +6,10 @@
 #include "../../include/benchmark.h"
 #include "../../include/server.h"
 #include "../../include/Logger.h"
+#include "../../include/http_response.h"
+#include "../../include/http_request.h"
+#include "../../include/request_validator.h"
+#include "../../include/connection.h"
 
 #include <atomic>
 #include <chrono>
@@ -60,6 +64,7 @@ public:
         // 确保连接有效
         if (fd_ < 0 && !Connect()) {
             result.error_message = "连接失败";
+            LOG_ERROR("HttpClient::SendRequest: 连接失败到 %s:%d", host_.c_str(), port_);
             return result;
         }
 
@@ -99,6 +104,7 @@ public:
         tv.tv_usec = 0;
         setsockopt(fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
+        LOG_INFO("HttpClient: 开始接收响应");
         while (true) {
             ssize_t received = recv(fd_, buffer, sizeof(buffer), 0);
             if (received < 0) {
@@ -172,6 +178,7 @@ private:
     bool Connect() {
         fd_ = socket(AF_INET, SOCK_STREAM, 0);
         if (fd_ < 0) {
+            LOG_ERROR("HttpClient: 创建socket失败: %s", strerror(errno));
             return false;
         }
 
@@ -181,6 +188,7 @@ private:
         addr.sin_port = htons(port_);
 
         if (inet_pton(AF_INET, host_.c_str(), &addr.sin_addr) <= 0) {
+            LOG_ERROR("HttpClient: 地址转换失败: %s:%d", host_.c_str(), port_);
             close(fd_);
             fd_ = -1;
             return false;
@@ -193,12 +201,15 @@ private:
         setsockopt(fd_, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         setsockopt(fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
+        LOG_INFO("HttpClient: 正在连接到 %s:%d", host_.c_str(), port_);
         if (connect(fd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            LOG_ERROR("HttpClient: 连接失败: %s (errno=%d)", strerror(errno), errno);
             close(fd_);
             fd_ = -1;
             return false;
         }
 
+        LOG_INFO("HttpClient: 连接成功到 %s:%d", host_.c_str(), port_);
         return true;
     }
 
@@ -228,10 +239,22 @@ public:
         return "测量服务器每秒处理请求数(QPS)和吞吐量";
     }
 
+    // 最小测试验证：启动服务器，发送单个请求，验证基本功能
+    // 定义在类内部（内联）
+
     BenchmarkResult Run(const BenchmarkConfig& config) override {
         BenchmarkResult result;
         result.name = GetName();
         result.start_time = std::chrono::system_clock::now();
+
+        // 首先运行最小测试验证基本功能
+        LOG_INFO("QPS基准测试: 开始运行最小测试验证");
+        if (!RunMinimalTest(config)) {
+            result.success = false;
+            result.error_message = "最小测试验证失败，服务器无法处理请求";
+            result.end_time = std::chrono::system_clock::now();
+            return result;
+        }
 
         // 验证配置
         auto errors = config.Validate();
@@ -250,15 +273,116 @@ public:
         std::thread server_thread;
 
         try {
+            // 确保public目录存在，包含测试文件（在build目录中）
+            system("mkdir -p public");
+            system("echo '<h1>TinyWebServer Benchmark Test</h1>' > public/index.html");
+            LOG_INFO("创建测试文件完成");
+
             server = std::make_unique<Server>(config.server_host, config.server_port);
+            // 设置消息处理回调（必须设置，否则服务器无法处理请求）
+            server->SetOnMessage([](std::shared_ptr<Connection> conn, const std::string& data) {
+                LOG_INFO("基准测试服务器回调: 收到数据，连接fd=%d，数据大小=%zu",
+                        conn->GetFd(), data.size());
+                auto parser = conn->GetHttpParser();
+                auto& buffer = conn->GetInputBuffer();
+
+                // 简单解析HTTP请求
+                size_t header_end = buffer.find("\r\n\r\n");
+                LOG_INFO("基准测试服务器回调: 查找header_end，缓冲区大小=%zu，header_end=%s",
+                        buffer.size(), (header_end != std::string::npos ? "找到" : "未找到"));
+
+                if (header_end != std::string::npos) {
+                    LOG_INFO("基准测试服务器回调: 尝试解析请求...");
+                    if (parser->Parse(buffer)) {
+                        LOG_INFO("基准测试服务器回调: 请求解析成功: %s %s %s",
+                                parser->GetMethod().c_str(), parser->GetPath().c_str(), parser->GetVersion().c_str());
+
+                        // 生成简单响应
+                        HttpResponse response;
+                        LOG_INFO("基准测试服务器回调: 初始化响应，路径=./public/index.html");
+                        response.Init("./public", "/index.html", false, -1, parser.get());
+                        response.MakeResponse();
+
+                        LOG_INFO("基准测试服务器回调: 发送响应头部");
+                        conn->Send(response.GetHeaderString());
+                        if (response.HasFileBody()) {
+                            LOG_INFO("基准测试服务器回调: 发送文件内容");
+                            conn->Send(response.GetFileBody());
+                        } else {
+                            LOG_INFO("基准测试服务器回调: 发送字符串内容");
+                            conn->Send(response.GetBodyString());
+                        }
+
+                        buffer.erase(0, header_end + 4);
+                        parser->Reset();
+                        LOG_INFO("基准测试服务器回调: 请求处理完成");
+                    } else {
+                        LOG_ERROR("基准测试服务器回调: 请求解析失败，关闭连接");
+                        buffer.clear();
+                        conn->Shutdown();
+                    }
+                } else {
+                    LOG_INFO("基准测试服务器回调: 数据不足，等待更多数据");
+                }
+            });
             server_thread = std::thread([&server]() {
-                server->Start();
+                server->Run();
             });
 
             // 等待服务器启动
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
             LOG_INFO("QPS基准测试: 服务器已启动在 %s:%d",
                     config.server_host.c_str(), config.server_port);
+
+            // 验证服务器是否真的在监听端口
+            LOG_INFO("验证服务器端口连接...");
+            int test_fd = socket(AF_INET, SOCK_STREAM, 0);
+            if (test_fd >= 0) {
+                struct sockaddr_in addr;
+                std::memset(&addr, 0, sizeof(addr));
+                addr.sin_family = AF_INET;
+                addr.sin_port = htons(config.server_port);
+                inet_pton(AF_INET, config.server_host.c_str(), &addr.sin_addr);
+
+                struct timeval tv;
+                tv.tv_sec = 2;
+                tv.tv_usec = 0;
+                setsockopt(test_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+                if (connect(test_fd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
+                    LOG_INFO("端口连接验证成功");
+                    close(test_fd);
+                } else {
+                    LOG_ERROR("端口连接验证失败: %s (errno=%d)", strerror(errno), errno);
+                    close(test_fd);
+                    result.success = false;
+                    result.error_message = "服务器端口无法连接，可能服务器未正确启动";
+                    result.end_time = std::chrono::system_clock::now();
+                    // 停止服务器线程
+                    if (server) server->Stop();
+                    if (server_thread.joinable()) server_thread.join();
+                    return result;
+                }
+            } else {
+                LOG_ERROR("创建测试socket失败: %s", strerror(errno));
+            }
+
+            // 测试请求：发送一个简单的HTTP请求并打印响应
+            LOG_INFO("发送测试请求...");
+            HttpClient test_client(config.server_host, config.server_port, false);
+            auto test_result = test_client.SendRequest("GET", "/index.html", "");
+            if (test_result.success) {
+                LOG_INFO("测试请求成功: 状态码=%d, 延迟=%ldms, 响应大小=%ld",
+                        test_result.status_code, test_result.latency_ms, test_result.response_size);
+            } else {
+                LOG_ERROR("测试请求失败: %s", test_result.error_message.c_str());
+                result.success = false;
+                result.error_message = "测试请求失败: " + test_result.error_message;
+                result.end_time = std::chrono::system_clock::now();
+                if (server) server->Stop();
+                if (server_thread.joinable()) server_thread.join();
+                return result;
+            }
         } catch (const std::exception& e) {
             result.success = false;
             result.error_message = std::string("启动服务器失败: ") + e.what();
@@ -404,12 +528,23 @@ public:
 
         const int warmup_requests = 100;
         std::vector<std::thread> warmup_threads;
+        std::atomic<int> warmup_success{0};
+        std::atomic<int> warmup_failed{0};
 
         for (int i = 0; i < std::min(10, config.concurrent_connections); ++i) {
-            warmup_threads.emplace_back([&config, i]() {
+            warmup_threads.emplace_back([&config, i, &warmup_success, &warmup_failed]() {
                 HttpClient client(config.server_host, config.server_port, config.keep_alive);
                 for (int j = 0; j < warmup_requests / 10; ++j) {
-                    client.SendRequest(config.request_method, config.request_path, config.request_body);
+                    auto result = client.SendRequest(config.request_method, config.request_path, config.request_body);
+                    if (result.success) {
+                        warmup_success++;
+                        LOG_INFO("预热请求成功: 状态码=%d, 延迟=%ldms, 大小=%ld (线程%d, 请求%d)",
+                                result.status_code, result.latency_ms, result.response_size, i, j);
+                    } else {
+                        warmup_failed++;
+                        LOG_WARN("预热请求失败: %s (线程%d, 请求%d)",
+                                result.error_message.c_str(), i, j);
+                    }
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 }
             });
@@ -422,7 +557,107 @@ public:
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        LOG_INFO("QPS基准测试: 预热阶段完成");
+        LOG_INFO("QPS基准测试: 预热阶段完成, 成功: %d, 失败: %d",
+                warmup_success.load(), warmup_failed.load());
+    }
+
+    inline bool RunMinimalTest(const BenchmarkConfig& config) {
+        LOG_INFO("=== 开始最小测试验证 ===");
+        LOG_INFO("服务器: %s:%d, 路径: %s",
+                config.server_host.c_str(), config.server_port, config.request_path.c_str());
+
+        // 确保public目录存在
+        system("mkdir -p public");
+        system("echo '<h1>TinyWebServer Benchmark Test</h1>' > public/index.html");
+        LOG_INFO("测试文件准备完成");
+
+        // 启动服务器
+        std::unique_ptr<Server> server;
+        std::thread server_thread;
+        bool test_success = false;
+
+        try {
+            server = std::make_unique<Server>(config.server_host, config.server_port);
+
+            // 设置消息处理回调（使用与main.cpp相同的逻辑）
+            server->SetOnMessage([this](std::shared_ptr<Connection> conn, const std::string& /*data*/) {
+                LOG_INFO("最小测试: 收到请求，开始处理");
+                auto parser = conn->GetHttpParser();
+                auto& buffer = conn->GetInputBuffer();
+
+                // 查找请求头结束标记
+                size_t header_end = buffer.find("\r\n\r\n");
+                if (header_end == std::string::npos) {
+                    LOG_INFO("最小测试: 数据不足，等待更多数据");
+                    return;
+                }
+
+                LOG_INFO("最小测试: 尝试解析请求，缓冲区大小=%zu", buffer.size());
+                if (parser->Parse(buffer)) {
+                    LOG_INFO("最小测试: 请求解析成功: %s %s",
+                            parser->GetMethod().c_str(), parser->GetPath().c_str());
+
+                    // 生成响应（使用与基准测试相同的逻辑）
+                    HttpResponse response;
+                    response.Init("./public", "/index.html", false, -1, parser.get());
+                    response.MakeResponse();
+
+                    conn->Send(response.GetHeaderString());
+                    if (response.HasFileBody()) {
+                        conn->Send(response.GetFileBody());
+                    } else {
+                        conn->Send(response.GetBodyString());
+                    }
+
+                    buffer.erase(0, header_end + 4);
+                    parser->Reset();
+                    LOG_INFO("最小测试: 响应已发送");
+                } else {
+                    LOG_ERROR("最小测试: 请求解析失败");
+                    buffer.clear();
+                    conn->Shutdown();
+                }
+            });
+
+            server_thread = std::thread([&server]() {
+                server->Run();
+            });
+
+            // 等待服务器启动
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+            LOG_INFO("最小测试: 服务器已启动");
+
+            // 发送测试请求
+            HttpClient test_client(config.server_host, config.server_port, false);
+            LOG_INFO("最小测试: 发送测试请求到 %s:%d%s",
+                    config.server_host.c_str(), config.server_port, config.request_path.c_str());
+
+            auto test_result = test_client.SendRequest("GET", "/index.html", "");
+
+            if (test_result.success) {
+                LOG_INFO("最小测试: 请求成功! 状态码=%d, 延迟=%ldms, 响应大小=%ld",
+                        test_result.status_code, test_result.latency_ms, test_result.response_size);
+                test_success = true;
+            } else {
+                LOG_ERROR("最小测试: 请求失败: %s", test_result.error_message.c_str());
+            }
+
+            // 停止服务器
+            if (server) {
+                server->Stop();
+            }
+            if (server_thread.joinable()) {
+                server_thread.join();
+            }
+
+        } catch (const std::exception& e) {
+            LOG_ERROR("最小测试: 异常: %s", e.what());
+            if (server) server->Stop();
+            if (server_thread.joinable()) server_thread.join();
+        }
+
+        LOG_INFO("=== 最小测试验证 %s ===", test_success ? "成功" : "失败");
+        return test_success;
     }
 
     void CleanUp(const BenchmarkConfig& /*config*/) override {

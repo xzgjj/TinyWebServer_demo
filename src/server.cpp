@@ -49,11 +49,20 @@ Server::Server(const std::string& ip, int port)
       config_(nullptr),
       keep_alive_manager_(std::make_unique<tinywebserver::KeepAliveManager>()) {
 
+    if (listen_fd_ < 0) {
+        LOG_ERROR("Failed to create listen socket on port %d", port);
+        throw std::runtime_error("Failed to create listen socket");
+    }
+
     // 默认线程数
     thread_pool_->SetThreadNum(4);
 
-    main_loop_->SetAcceptCallback(std::bind(&Server::HandleAccept, this, listen_fd_));
-    main_loop_->UpdateEvent(listen_fd_, EPOLLIN | EPOLLET);
+    // 设置监听socket的读事件回调（当有新连接时触发）
+    main_loop_->SetReadCallback(listen_fd_,
+        [this, listen_fd = listen_fd_](int fd) {
+            this->HandleAccept(listen_fd);
+        });
+    LOG_INFO("Server: 设置read回调，将在Run()中注册事件");
 
     LOG_INFO("Server started on %s:%d", ip.c_str(), port);
 }
@@ -80,8 +89,12 @@ Server::Server(const std::shared_ptr<tinywebserver::ServerConfig>& config)
     // 设置线程池线程数从配置
     thread_pool_->SetThreadNum(server_opts.threads);
 
-    main_loop_->SetAcceptCallback(std::bind(&Server::HandleAccept, this, listen_fd_));
-    main_loop_->UpdateEvent(listen_fd_, EPOLLIN | EPOLLET);
+    // 设置监听socket的读事件回调（当有新连接时触发）
+    main_loop_->SetReadCallback(listen_fd_,
+        [this, listen_fd = listen_fd_](int fd) {
+            this->HandleAccept(listen_fd);
+        });
+    LOG_INFO("Server: 设置read回调，将在Run()中注册事件");
 
     LOG_INFO("Server started on %s:%d (config)", server_opts.ip.c_str(), server_opts.port);
 }
@@ -108,13 +121,19 @@ void Server::Stop() {
 }
 
 void Server::Run() {
-    main_loop_->Loop(); 
+    LOG_INFO("Server::Run() 开始事件循环");
+    LOG_INFO("Server::Run() 注册监听事件到EventLoop, fd=%d", listen_fd_);
+    main_loop_->UpdateEvent(listen_fd_, EPOLLIN | EPOLLET);  // 边缘触发模式
+    LOG_INFO("Server::Run() 监听事件注册完成");
+    main_loop_->Loop();
+    LOG_INFO("Server::Run() 事件循环结束");
 }
 
 void Server::HandleAccept(int listen_fd) {
+    LOG_INFO("Server::HandleAccept: 新的accept事件，listen_fd=%d", listen_fd);
     struct sockaddr_in client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
-    
+
     // 循环 accept 处理并发连接（ET模式下必须读完）
     while (true) {
         int conn_fd = accept4(listen_fd, (struct sockaddr*)&client_addr, &client_addr_len, 
