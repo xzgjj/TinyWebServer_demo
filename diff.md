@@ -2,6 +2,21 @@
 
 
 
+## 2026-03-08 (CI修复与历史清理)
+
+### 涉及文件
+1. `src/config/server_config.cpp` - 修复json.hpp包含路径
+2. `benchmark/src/benchmark_base.cpp` - 修复json.hpp包含路径
+3. `benchmark/src/benchmark_runner.cpp` - 修复json.hpp包含路径
+4. git历史 - 移除所有提交中的"Co-Authored-By: Claude Opus 4.6"行
+
+### 核心 Diff 摘要
+#### 1. 修复CI构建错误
+由于GitHub Actions环境中缺少系统nlohmann/json库，将`#include <nlohmann/json.hpp>`改为`#include "json.hpp"`，使用本地third_party/json.hpp文件。
+
+#### 2. 清理git历史
+使用git filter-branch移除所有提交消息中的"Co-Authored-By: Claude Opus 4.6"行，确保GitHub作者信息中不包含Claude。
+
 ## 2026-03-06 (阶段一完成)
 ### 涉及文件
 1. `include/connection.h` - Connection 状态机扩展

@@ -828,3 +828,4 @@ python3 tools.py clean-logs --help
 
 ### 本次增量记录
 - 2026-03-08：扩展tools.py，添加定期日志清理功能，实现智能清理策略与失败保护机制。
+- 2026-03-08：修复CI构建错误，更正json.hpp包含路径，并清理git历史中的Claude协作者信息。
