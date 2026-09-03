@@ -1,5 +1,11 @@
 # TinyWebServer 项目笔记 - 增量更新日志
 
+## 2026-09-03 (audit-w1 架构总览)
+
+- 结对审计基线：通读主线代码，产出 `doc/architecture_overview.md`（架构总览 + 数据流 + 设计决策 + 8 条待审疑问）
+- 关键发现：HttpParser（状态机版）零引用；状态机 kReading/kProcessing/kWriting 无转移调用点；HTTP body 残留（当前仅解析 header）；http2/ 未接入主线
+- 状态: 待结对审核疑问清单后确认
+
 ## 当前进度
 ### 已完成功能
 1. **多 Reactor 架构**：

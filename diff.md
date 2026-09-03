@@ -2,6 +2,21 @@
 
 
 
+## 2026-09-03 (audit-w1 架构总览与数据流)
+
+### 涉及文件
+1. `doc/architecture_overview.md` - 新增，架构总览与数据流（结对审计基线）
+2. `notes.txt` - 追加审计基线记录
+3. `diff.md` - 本次记录
+
+### 核心内容摘要
+- 两种运行模式（传统 Main-Sub / SO_REUSEPORT 分布式）流程与切换点
+- 线程模型与 fd 归属纪律（HandleAccept → RunInLoop 移交 → ConnectEstablished）
+- 事件循环（epoll + BatchIOHandler 分组 + eventfd 唤醒 + TimerWheel 时间轮）
+- 连接状态机现状（7 态定义，业务路径半启用）+ 读写/背压/超时/统一关闭路径
+- HTTP 链路（HttpRequest 主线 / HttpParser 死代码双轨；body 处理缺口）
+- 8 条待结对审核疑问（Q1-Q8）
+
 ## 2026-03-08 (structured_logger修复)
 
 ### 涉及文件
