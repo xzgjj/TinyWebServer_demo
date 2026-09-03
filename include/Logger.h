@@ -31,10 +31,14 @@ public:
     }
 
     // 设置全局日志文件并启动后端线程
-    void Init(const std::string& log_path, LogLevel min_level = LogLevel::LOG_LEVEL_INFO) 
+    // 【新增】max_pending/policy 透传：有界队列上限与满队列策略
+    void Init(const std::string& log_path,
+              LogLevel min_level = LogLevel::LOG_LEVEL_INFO,
+              size_t max_pending = AsyncLogger::kMaxPendingLogs,
+              AsyncLogger::FullPolicy policy = AsyncLogger::FullPolicy::kDiscardOldest)
     {
         min_level_ = min_level;
-        impl_ = std::make_unique<AsyncLogger>(log_path);
+        impl_ = std::make_unique<AsyncLogger>(log_path, 3, max_pending, policy);
         impl_->Start();
     }
 

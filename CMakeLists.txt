@@ -215,6 +215,7 @@ if(BUILD_TESTING)
         test_multithread_reactor
         test_basic
         test_log
+        test_bounded_logger
         test_structured_log
         test_request_validator
         test_keep_alive

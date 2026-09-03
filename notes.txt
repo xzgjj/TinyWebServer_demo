@@ -1,5 +1,17 @@
 # TinyWebServer 项目笔记 - 增量更新日志
 
+## 2026-09-03 (audit-02 有界异步日志队列)
+
+- 完成 notes.txt"正在进行"第一项：AsyncLogger 待写队列有界化（默认上限 10000 缓冲）
+- 新增满队列策略：kDiscardOldest（默认，丢最旧保最新，丢弃计数单位=缓冲）/ kDiscardNewest / kBlock（有界等待 1s 超时丢弃）
+- 新增日志文件轮转：超过阈值（默认 64MB）保存为 basename.1（保留 1 份）并重开新文件
+- 新增丢弃告警（每满 100 条输出 stderr）与待写字节统计 GetPendingBytes
+- 配置接线：main.cpp 从 LoggingOptions.queue_size 读取队列上限（配置加载提前到日志初始化前）
+- 修复：后端线程 swap 拿空队列时 notify_all（kBlock 等待者唤醒）；kBlock 等待点移至真正换出时
+- test_bounded_logger 6 场景 13 checks 通过（三策略精确守恒 + 小日志零丢失 + 轮转守恒 + 8 线程并发守恒）；test_log 回归 64069 logs/sec（基线 54758）
+- 状态: 待结对审核
+- 【命名规则】Phase 阶段 → w 小阶段 → 每个 w 拆 4-6 个 commit（500-800 行/commit、逻辑完整可运行）；commit 编号 [audit-XX] 全局连续，不复用 w 名；实验期从简，正式 Phase 起开工前先出 4-6 commit 规划
+
 ## 2026-09-03 (audit-w1 架构总览)
 
 - 结对审计基线：通读主线代码，产出 `doc/architecture_overview.md`（架构总览 + 数据流 + 设计决策 + 8 条待审疑问）

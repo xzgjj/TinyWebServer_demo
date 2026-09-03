@@ -2,6 +2,22 @@
 
 
 
+## 2026-09-03 (audit-02 有界异步日志队列)
+
+### 涉及文件
+1. `include/async_logger.h` - kMaxPendingLogs 上限、FullPolicy 枚举、轮转常量、构造参数（含 max_file_size）、GetPendingCount/GetPendingBytes/GetDroppedCount
+2. `src/async_Logger.cpp` - Append 满队列策略（DiscardOldest/DiscardNewest/Block）+ EnforceCapacityLocked + 轮转 RotateFile + 丢弃告警 + 后端 swap 后 notify_all
+3. `include/Logger.h` - Init 透传 max_pending/policy 参数
+4. `src/main.cpp` - 配置加载提前 + 日志队列上限从 LoggingOptions.queue_size 接线
+5. `test/test_bounded_logger.cpp` - 新增（6 场景：三策略精确守恒 + 小日志零丢失 + 轮转守恒 + 并发守恒，13 checks）
+6. `CMakeLists.txt` - 注册 test_bounded_logger
+
+### 核心 Diff 摘要
+- 队列满时丢弃单位 = 缓冲（约 2.2MB 大日志场景下 1 缓冲 = 1 行）
+- kBlock 有界等待 1s 超时丢弃（避免 IO 线程无限阻塞）
+- 轮转保留 1 份旧文件（basename.1），阈值 0 表示关闭轮转
+- 向后兼容：所有新参数带默认值，既有调用不变
+
 ## 2026-09-03 (audit-w1 架构总览与数据流)
 
 ### 涉及文件

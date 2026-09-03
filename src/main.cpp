@@ -59,17 +59,25 @@ int main(int argc, char* argv[]) {
         mkdir("./local/logs/benchmark", 0755);
     }
 
-    Logger::GetInstance().Init("./local/logs/tiny_server.log", LogLevel::LOG_LEVEL_INFO);
-
-    std::unique_ptr<Server> server;
+    // 先加载配置（若提供），供日志初始化使用（如队列上限）
     std::shared_ptr<tinywebserver::ServerConfig> config = nullptr;
-
     if (!config_file.empty()) {
         config = tinywebserver::ServerConfig::LoadFromFile(config_file);
         if (!config) {
             std::cerr << "Failed to load configuration from " << config_file << std::endl;
             return 1;
         }
+    }
+
+    // 【新增】日志待写队列上限从配置读取（默认 10000，与配置默认一致）
+    size_t log_queue_size = AsyncLogger::kMaxPendingLogs;
+    if (config) {
+        log_queue_size = config->GetLoggingOptions().queue_size;
+    }
+    Logger::GetInstance().Init("./local/logs/tiny_server.log", LogLevel::LOG_LEVEL_INFO, log_queue_size);
+
+    std::unique_ptr<Server> server;
+    if (config) {
         server = std::make_unique<Server>(config, PluginManager::GetInstance());
         LOG_INFO("Server configured from file: %s", config_file.c_str());
 
