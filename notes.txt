@@ -848,3 +848,67 @@ python3 tools.py clean-logs --help
 - 2026-03-08：扩展tools.py，添加定期日志清理功能，实现智能清理策略与失败保护机制。
 - 2026-03-08：修复CI构建错误，更正json.hpp包含路径，并清理git历史中的Claude协作者信息。
 - 2026-03-08：修复structured_logger.cpp编译错误，确保POSIX兼容性，添加时间函数错误处理。
+
+================================================================================
+## 2026-10-15  v8 阶段：[audit-03 .. audit-12] C++23 多编译器 + SPEC 驱动门禁
+================================================================================
+
+### 一、本阶段起点实测（不是推断）
+- Windows 原生（MSYS2 UCRT64）：**构建失败，0/20 测试可运行** —— sys/epoll.h、sys/uio.h、
+  sys/mman.h 在 MinGW 下不存在。
+- WSL2 g++13.3 c++17：构建成功，ctest 20/20 通过（13.7s）。
+- g++ -std=c++23 全源码：0 error（升级标准本身几乎无成本）。
+- clang++ 18.1：**55 error**，且 c++17 与 c++23 **完全相同** → 是预存在的可移植性缺陷，
+  与标准无关。根因：http_request.h 的全局 `using tinywebserver::HttpRequest;`
+  与 connection.h 的全局 `class HttpRequest;` 冲突（GCC 容忍、Clang 报歧义）。
+- `.gitignore` 第 12 行 `test_*` 把 test/ 下 **17 个测试源文件**静默排除 →
+  远端仓库只有 3 个测试，CI 根本跑不了测试套件（"改测试让失败消失"的最坏形态）。
+- CLAUDE.md 3727 字（超 3000 预算）、implementation_plan.md 13947 字（4.6 倍超标）。
+
+### 二、决策记录（用户拍板）
+1. Windows 口径：先选 A（全量编译 + 非 socket 测试运行），实现完成后用户复评改为 **B**：
+   **移除 Win32 兼容层，Windows 只构建/测试可移植核心**。理由：epoll/ET/SO_REUSEPORT
+   是项目技术身份，Windows 上只能退化成 WSAPoll(O(n))（实测 test_stress 直接超时），
+   要真高并发需 IOCP = Proactor，违反「禁止 Reactor→Proactor」的架构约束。
+2. WSL 侧零安装（用现有 g++13.3 + clang18）。
+3. 提交节奏：全部实现完一次性汇报；本轮允许推送，阶段提交仍由用户复核修订。
+4. 规则审批人 = xzgjj（本地 waiver approved_by 同）；允许 msys2/setup-msys2。
+5. 存量文档（CLAUDE.md、implementation_plan.md）豁免 3000 字绝对上限，改用**棘轮**（只减不增）。
+
+### 三、提交清单（本地，未推送）
+| commit | 内容 | 关键验证 |
+|---|---|---|
+| audit-03 | CMake 多标准/多编译器/多平台配置（TWS_CXX_STANDARD、严格模式、测试标签） | WSL g++ c++17/23 构建 + ctest 20/20 |
+| audit-04 | 多编译器真实缺陷修复（clang 命名空间 55 错、头文件自洽、ETag 跨时钟抖动、aligned_alloc、mkdir） | WSL clang c++17/23 构建 + ctest 20/20 |
+| audit-05 | .gitignore 修复：17 个测试源入库 | git ls-files test/ 由 3 → 20 |
+| audit-06 | C++ 标准兼容层 cpp_compat.h + 四工具链特性矩阵 | 26 特性 × 4 工具链 × 3 标准实测 |
+| audit-07/08 | （后由 audit-09 回退）Win32 POSIX 兼容层与 epoll/eventfd/mmap 后端 | 曾达 Windows 全量编译 + 15/17 |
+| audit-09 | 回退平台层，改为「可移植核心」二分（PORTABLE 17 / NETWORK 15 源文件） | Windows 9/9 portable；WSL 21/21 |
+| audit-10 | 门禁：spec.toml + 引擎 + 16 判定器 + 负向夹具自测 + 棘轮基线 | selftest 17/17；真实仓库 gate PASS |
+| audit-11 | CI 三层（selfcheck / build 矩阵 / gate 判定）+ CODEOWNERS + 复现脚本 | 本地同一套脚本实跑 8 格 |
+| audit-12 | tools.py 接入 gate/ci-local + SPEC.md + CLI.md（均 ≤3000 字） | DOC-001 通过 |
+
+### 四、门禁设计要点（详见 doc/gate_system_design.md）
+- 16 条规则把六类失败模式变成机器判定：DOC-001/002/003、CODE-001/002、SCOPE-001/002、
+  QUAL-001/002/003、STD-001、TEST-001/002、CI-001、GOV-001/002。
+- **机器判定 vs 人工判断分离**：可判定的阻断；不可判定的转 manual（如"改测试是否合理"，
+  转人工且未批准前按阻断处理）。
+- **fail-closed**：申请例外 ≠ 放行，必须由非作者批准。
+- **棘轮**：存量问题（字数/警告/复杂度/cppcheck）冻结在 gate/baseline.json，只允许下降。
+- **重试上限**：同任务失败 3 次 → HALTED（exit 2），必须人工 reset。
+- **门禁自证**：每条规则一个负向夹具，selftest 证明"该红时一定红"，--strict 零 SKIP。
+
+### 五、门禁在本阶段抓到的真实缺陷（自证有效）
+1. include/common/cpp_compat.h 用了 std::to_underlying/std::uint32_t 却没有显式
+   #include <utility>/<cstdint> —— 头文件不自洽（作为独立 TU 编译即失败）。
+2. benchmark_runner/benchmark_memory 使用 POSIX 专属 sysconf/getpagesize
+   （Windows 全量构建时暴露）。
+3. SPEC.md/CLI.md 引用了尚未创建的 gate/baseline.json 等文件（DOC-003）。
+4. 存量超标函数与警告无基线导致门禁永久红（促使引入棘轮机制）。
+
+### 六、未决 / 待用户处理
+- 阶段提交复核：audit-03..audit-12 共 10 个本地提交等待用户审阅；确认后推送。
+- implementation_plan.md 现为**历史规划文档**（v6-v7 计划），现行规格以 SPEC.md 为准；
+  因棘轮约束（13947 字）未做增补，避免触发 DOC-001。
+- 门禁已知边界：本地无法强制"批准者≠作者"（只有 GitHub 分支保护能强制）；
+  无判定器级超时（Python 线程不可强杀）。

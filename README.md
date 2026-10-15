@@ -10,7 +10,41 @@
 
 
 > **定位说明**  
-> 本项目是基于 **Reactor 模式（epoll）** 的 C++ Web Server 工程化示例。当前处于 **v7.x 演进阶段**，重点在连接治理、可观测性、安全校验与协议完整性。
+> 本项目是基于 **Reactor 模式（epoll）** 的 C++ Web Server 工程化示例。当前处于 **v8 阶段**：
+> C++23 为默认标准（兼容 C++17）、多编译器（g++/clang）多环境构建、并引入 SPEC 驱动的 CI 门禁。
+
+---
+
+## v8 平台与构建速览（完整规格见 [SPEC.md](SPEC.md)，命令契约见 [CLI.md](CLI.md)）
+
+本项目的技术身份建立在 Linux 专有机制上：`epoll`（O(1) 事件通知）、边缘触发 ET、
+`SO_REUSEPORT` 内核级负载均衡、`eventfd`、`mmap` 零拷贝。因此：
+
+| 环境 | 构建范围 | 测试 |
+|---|---|---|
+| Linux / WSL2 | 全量（库 + server + 全部测试 + 基准） | 全量 ctest（21 项） |
+| Windows（MSYS2 UCRT64） | **可移植核心**（配置/日志/指标/协议解析/校验/内存池/兼容层） | portable ctest（9 项） |
+
+> Windows 上**不提供**网络层移植：`WSAPoll` 是 O(n) 轮询，要拿到 epoll 级并发只能上 IOCP，
+> 而 IOCP 属 Proactor，会破坏本项目要讲清楚的 Reactor 模型。宁可显式不支持，也不做误导性移植。
+
+```bash
+# 构建（标准可切 17/20/23）
+cmake -S . -B build -G Ninja -DTWS_CXX_STANDARD=23 -DBUILD_TESTING=ON
+cmake --build build --parallel
+
+# 测试
+ctest --test-dir build --output-on-failure     # 全量
+ctest --test-dir build -L portable             # 跨平台集（Windows 上就是全部）
+
+# 门禁（规则唯一真相源 gate/spec.toml）
+python tools.py gate run --task <id>           # 判定
+python tools.py gate selftest                  # 门禁自测（该红时必须红）
+python tools.py ci-local --std 23              # 构建 + ctest + 门禁
+```
+
+多平台构建矩阵与 C++ 特性白名单的证据：`doc/evidence/final_verification.md`、
+`doc/cxx_standard_matrix.md`；门禁设计全文：`doc/gate_system_design.md`。
 
 ---
 

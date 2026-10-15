@@ -1,3 +1,44 @@
+﻿## 2026-10-15 (audit-03 .. audit-12：C++23 多编译器 + 门禁系统)
+
+### 涉及文件（按提交）
+1. `CMakeLists.txt` - 标准可配置(TWS_CXX_STANDARD 17/20/23)+严格模式+按编译器分支 flag+
+   测试标签(smoke/portable/socket/gtest)+compile_commands.json+去 bash 依赖；
+   audit-09 起按可移植性二分 PORTABLE_SOURCES(17)/NETWORK_SOURCES(15)
+2. `include/connection.h`、`include/http_request.h` - 删除冲突的全局前置声明；补 <cstdint>
+3. `src/http/conditional_request_handler.cpp` - ETag 跨时钟换算改为确定性（ToSystemTime）
+4. `src/memory_pool.cpp`、`include/platform/mem_compat.h` - 去掉 std::aligned_alloc（MinGW 缺失）
+5. `src/main.cpp`、`include/platform/fs_compat.h` - mkdir 元数差异
+6. `test/test_main.cpp` - std::min 模板推导（MinGW size_type 差异）
+7. `.gitignore` - `test_*` -> `/test_*`、`server` -> `/server`（释放 17 个被静默忽略的测试源）
+8. `include/common/cpp_compat.h` - 特性宏探测 + tws::to_underlying/str_contains/byteswap32
+9. `scripts/gate/**`、`gate/spec.toml`、`gate/fixtures/**` - 门禁引擎 + 16 判定器 + 负向夹具
+10. `gate/baseline.json`、`gate/protected_tests.json` - 棘轮基线与受保护测试基线
+11. `.github/workflows/gate.yml`、`CODEOWNERS` - 三层 CI + 规则审批人
+12. `tools.py` - gate 透传子命令、ci-local、cmake --build、--std
+13. `SPEC.md`、`CLI.md`、`doc/gate_system_design.md`、`doc/cxx_standard_matrix.md`、`doc/evidence/baseline.md`
+14. `test/test_cpp_compat.cpp` - 兼容层单元测试（满足 TEST-002）
+15. `.gitattributes` - 统一 LF（bash 脚本在 Windows 下不被 CRLF 破坏）
+16. 删除：`include/platform/win32/**`、`include/platform/io_compat.h`、`win32_backend.h`、
+    `win32_filemap.h`、`src/platform/**`（audit-09 回退 Win32 兼容层）
+
+### 核心 Diff 摘要
+- **标准**：同一份源码在 c++17 与 c++23 下、g++ 与 clang 下均零错误构建；
+  交集外特性（expected/print/mdspan/flat_map）必须写在 `#if TWS_HAS_*` 保护块内（STD-001 扫描）。
+- **平台**：Windows 只构建可移植核心（配置/日志/指标/协议解析/校验/内存池/兼容层），
+  server/reactor/http2/plugin/benchmark 显式跳过并在 CMake 输出说明原因。
+- **门禁**：可判定问题机器拦（16 条规则），不可判定问题转人工且需非作者批准；
+  存量问题走棘轮基线；同任务失败 3 次 HALTED 防无限循环。
+
+### 实测证据（本机）
+| 工具链 | c++17 | c++23 |
+|---|---|---|
+| WSL2 g++13.3 | 构建 OK + ctest 21/21 | 构建 OK + ctest 21/21 |
+| WSL2 clang18.1 | 构建 OK + ctest 21/21 | 构建 OK + ctest 21/21 |
+| Windows g++16.2 | 构建 OK + ctest 9/9 | 构建 OK + ctest 9/9 |
+| Windows clang22.1 | 构建 OK + ctest 9/9 | 构建 OK + ctest 9/9 |
+
+- `scripts/gate/selftest.py`：17/17（16 规则负向 + 干净场景不误报）
+- 真实仓库 `gate run --task v8-cpp23-gates --base ae1eaa5..HEAD`：PASS（13 pass / 3 warn / 0 block）
 # Diff 记录 - TinyWebServer 关键代码修改
 
 
