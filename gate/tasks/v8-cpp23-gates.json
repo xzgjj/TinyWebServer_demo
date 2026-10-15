@@ -41,8 +41,8 @@
   "audit_tag": "audit-03",
   "base_ref": "",
   "created_at": "2026-10-15T17:54:21+0800",
-  "updated_at": "2026-10-15T20:21:51+0800",
-  "revision": 29,
+  "updated_at": "2026-10-15T20:23:01+0800",
+  "revision": 30,
   "notes": [
     "2026-10-15T20:18:30+0800 reset by xzgjj: 修订计数语义已修正（改为同一修订连续失败才累加），重置历史计数",
     "2026-10-15T20:19:25+0800 reset by xzgjj: 契约预算已按基建口径重新声明（含 budget_rationale），且 TEST-001/CI-001/GOV-001 的判定语义已修正"

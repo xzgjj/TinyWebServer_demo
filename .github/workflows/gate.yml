@@ -140,7 +140,24 @@ jobs:
       - name: 门禁判定
         id: gate
         run: |
-          BASE="${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }}"
+          # 判定基线 = 本分支与默认分支的 merge-base（= PR 的真实改动集）。
+          # 为什么不用 github.event.before：那是"上一次推送的位置"，只覆盖最后一个提交，
+          # 于是**整个分支的改动被拆成一堆单提交判定**，自举期语义永远不生效，
+          # 而"这次推送是否碰了规则文件"这种判定也不代表人真正审阅的范围。
+          # 退化顺序：PR 的 base.sha -> 与默认分支的 merge-base -> event.before -> HEAD~1
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then
+            BASE=$(git merge-base "origin/${DEFAULT_BRANCH}" HEAD 2>/dev/null || true)
+          fi
+          if [ -z "$BASE" ]; then
+            BASE="${{ github.event.before }}"
+          fi
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE="HEAD~1"
+          fi
+          echo "判定基线 BASE=$BASE（分支 $(git rev-parse --short HEAD)，默认分支 $DEFAULT_BRANCH）"
+          git log --oneline "${BASE}..HEAD" | head -30
           # --task auto：取 gate/tasks/ 里最近更新的任务契约。
           # 不传 --task 会因 SCOPE-001（无契约即阻断）导致每次运行必红，门禁会被当噪声忽略。
           python3 scripts/gate/cli.py run --task auto --base "${BASE}..HEAD" --serial
