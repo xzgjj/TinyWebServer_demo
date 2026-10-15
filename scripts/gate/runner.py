@@ -16,11 +16,10 @@ import time
 import traceback
 from pathlib import Path
 from typing import Any, Callable
-
 from . import ledger as ledger_mod
 from . import report as report_mod
 from . import waivers as waivers_mod
-from .context import Context, build_context
+from .context import Context, build_context, match_any
 from .model import ExitCode, Finding, GateReport, RuleResult, Status, new_run_id
 from .spec import Rule, Spec, SpecError
 from .task import TaskContract, TaskError, now_iso
@@ -294,30 +293,69 @@ def run_rules(
 # --------------------------------------------------------------------------- #
 # 例外
 # --------------------------------------------------------------------------- #
-def apply_waivers(results: list[RuleResult], active: list[Waiver]) -> list[Waiver]:
+def _finding_paths(finding: Finding) -> list[str]:
+    """从 finding 中抽出可用于 scope 匹配的路径。
+
+    subject 可能是 "src/a.cpp:12"、"(diff 行数)"、"(任务契约)" 等；只有像路径的才参与匹配。
+    """
+    out: list[str] = []
+    subject = str(getattr(finding, "subject", "") or "")
+    token = subject.split(":")[0].strip()
+    if token and "/" in token and not token.startswith("("):
+        out.append(token.replace("\\", "/"))
+    ev = getattr(finding, "evidence", None)
+    if ev:
+        out.append(str(ev).replace("\\", "/"))
+    return out
+
+
+def apply_waivers(results: list[RuleResult], active: list[Waiver],
+                  rule_level_allowed: set[str] | None = None) -> list[Waiver]:
     """把已批准的例外落到 findings 上；返回实际生效的例外列表。
 
     只有 BLOCK / MANUAL 可以被例外覆盖：
       * HALTED（重试超限）——只能由人执行 gate reset，不能被例外绕过；
       * ERROR（检查自身出错）——环境问题必须修好，掩盖它等于掩盖门禁失效。
+
+    **scope 语义（重要）**：waiver 的 scope_files 限定"豁免哪些文件"，不是"这条规则要不要生效"。
+      实测过一个可绕过路径：一条 scope=[src/a.cpp] 的 SCOPE-001 例外，把同一规则下
+      "LICENSE 被篡改（default_deny）"的越界项一并豁免了（exit 0）。因此：
+        - scope 非空：只豁免路径命中 scope 的 finding，其余保持阻断；
+        - scope 为空：只有 rule_level_allowed 白名单里的规则（默认仅 CI-001）允许，
+          其它规则的空 scope 例外不生效（报告里会说明原因）。
     """
-    by_rule: dict[str, Waiver] = {}
-    for w in active:
-        by_rule.setdefault(w.rule, w)            # 同一规则多条生效例外时取最早一条
+    allowed_rule_level = rule_level_allowed or set()
     applied: list[Waiver] = []
     for r in results:
-        w = by_rule.get(r.rule_id)
-        if w is None:
+        candidates = [w for w in active if w.rule == r.rule_id]
+        if not candidates:
             continue
         hit = 0
         for f in r.findings:
-            if f.status in (Status.BLOCK, Status.MANUAL):
-                f.status = Status.WAIVED
-                hit += 1
-        if hit:
-            r.waived_by = w.approved_by
-            r.waiver_id = w.waiver_id
-            applied.append(w)
+            if f.status not in (Status.BLOCK, Status.MANUAL):
+                continue
+            paths = _finding_paths(f)
+            effective: Waiver | None = None
+            for w in candidates:
+                if not w.scope_files:
+                    if r.rule_id in allowed_rule_level:
+                        effective = w
+                        break
+                    continue
+                if paths and any(match_any(p, w.scope_files) for p in paths):
+                    effective = w
+                    break
+            if effective is None:
+                continue
+            f.status = Status.WAIVED
+            f.hint = (f.hint or "") + (
+                f" [已由 {effective.waiver_id} 豁免；批准人={effective.approved_by}]"
+            )
+            hit += 1
+            if effective not in applied:
+                applied.append(effective)
+            r.waived_by = effective.approved_by
+            r.waiver_id = effective.waiver_id
     return applied
 
 
@@ -401,7 +439,8 @@ def run_gate(
         env["notes"].append(
             f"例外账本读取失败（{type(exc).__name__}: {exc}）：本次按无例外处理，判定只会更严"
         )
-    applied = apply_waivers(results, active)
+    applied = apply_waivers(results, active,
+                            rule_level_allowed=set(spec.meta.get("rule_level_waiver_allowed") or []))
     env["applied_waivers"] = [w.to_dict() for w in applied]
     if active and not applied:
         env["notes"].append(f"有 {len(active)} 条生效例外，但本次没有任何规则命中它们")

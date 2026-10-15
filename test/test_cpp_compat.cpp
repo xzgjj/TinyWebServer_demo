@@ -22,14 +22,19 @@
 namespace {
 
 int g_checks = 0;
+int g_failures = 0;
 
+/// 断言 + **独立记账**：不能只依赖 assert —— Release 下 NDEBUG 会让 assert 消失，
+/// 测试就变成永远绿（本项目的裸 assert 测试曾有此问题）。失败必须反映到退出码。
 void Check(bool condition, const char* what) {
     ++g_checks;
-    if (!condition) {
-        std::fprintf(stderr, "[FAIL] %s\n", what);
-        assert(condition);
+    if (condition) {
+        std::printf("  [ok] %s\n", what);
+        return;
     }
-    std::printf("  [ok] %s\n", what);
+    ++g_failures;
+    std::fprintf(stderr, "[FAIL] %s\n", what);
+    assert(condition);   // Debug 下保留断言，便于就地定位
 }
 
 enum class Color : unsigned char { kRed = 1, kGreen = 2 };
@@ -83,6 +88,10 @@ int main() {
     TestCppCompat();
     TestAlignedAlloc();
     TestMakeDir();
+    if (g_failures != 0) {
+        std::fprintf(stderr, "==== FAILED: %d/%d checks failed ====\n", g_failures, g_checks);
+        return 1;
+    }
     std::printf("==== PASSED (%d checks) ====\n", g_checks);
     return 0;
 }

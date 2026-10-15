@@ -14,7 +14,7 @@ namespace {
 /**
  * @brief file_time_type -> system_clock::time_point 的确定性换算。
  *
- * 背景（[audit-05] 修复的真实缺陷）：
+ * 背景（[audit-04] 修复的真实缺陷）：
  *   常见写法是 `ftime - file_clock::now() + system_clock::now()`，它在**每次调用**
  *   都重新采样两个时钟。两个采样点之间的偏差会让"同一个文件"在不同时刻算出不同的
  *   系统时间；ETag 只保留秒级精度，于是同一文件可能先后得到相差 1 秒的 ETag，

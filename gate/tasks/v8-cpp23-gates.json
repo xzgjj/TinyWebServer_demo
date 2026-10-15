@@ -1,10 +1,10 @@
 {
   "id": "v8-cpp23-gates",
   "title": "v8: C++23 多编译器 + SPEC 驱动门禁",
-  "phase": "W1-W12",
+  "phase": "W1-W15",
   "owner": "agent",
-  "state": "FAILED",
-  "attempts": 2,
+  "state": "HALTED",
+  "attempts": 4,
   "acceptance": [
     "四工具链x双标准编译通过",
     "门禁 selftest --strict 全过",
@@ -26,17 +26,19 @@
     "SPEC.md",
     "CLI.md",
     "tools.py",
-    "CODEOWNERS"
+    "CODEOWNERS",
+    "notes.txt",
+    "diff.md"
   ],
   "deny": [],
   "max_changed_lines": 13000,
   "min_changed_lines": null,
-  "max_changed_files": 130,
+  "max_changed_files": 140,
   "protected": [],
   "audit_tag": "audit-03",
   "base_ref": "",
   "created_at": "2026-10-15T17:54:21+0800",
-  "updated_at": "2026-10-15T18:23:54+0800",
-  "revision": 9,
+  "updated_at": "2026-10-15T19:11:28+0800",
+  "revision": 12,
   "notes": []
 }

@@ -48,13 +48,16 @@ def scope(ctx: Context, rule: Rule) -> list[Finding]:
     default_deny: list[str] = list(rule.get("default_deny") or [])
     task = ctx.task
 
+    # 范围判定用 git.changed（含被删除的文件）；affected() 会过滤掉"已不存在"的路径，
+    # 用它会把"删除 LICENSE"这类改动整个漏掉（实测 exit 0）。
+    changed = list(ctx.git.changed)
     if task is None:
         if require_contract:
             return [
                 Finding(
                     rule=rule.id, status=Status.BLOCK, subject="(任务契约)",
                     message="未声明任务契约：无契约的改动不允许进入门禁",
-                    observed={"task": None, "affected": len(ctx.affected())},
+                    observed={"task": None, "changed": len(changed)},
                     threshold="存在 gate/tasks/<id>.json 且处于活动状态",
                     level="error",
                     hint="先声明任务契约（含 allow/deny 与 diff 预算），再提交改动。",
@@ -71,9 +74,12 @@ def scope(ctx: Context, rule: Rule) -> list[Finding]:
 
     deny = list(task.deny) if task else []
     allow = list(task.allow) if task else []
-    affected = ctx.affected()
+    # 判定对象是 git 报出的全部改动（含被删除的文件与被展开的未跟踪文件），
+    # 只剔除 exclude_globs（构建产物/第三方/夹具）。不能用 affected()：
+    # 它过滤掉"已不存在"的路径，会把"删除 public/index.html"整个漏掉。
+    targets = [p for p in changed if not ctx.excluded(p)]
 
-    if not affected:
+    if not targets:
         findings.append(
             Finding(
                 rule=rule.id, status=Status.PASS, subject="(改动文件)",
@@ -85,7 +91,7 @@ def scope(ctx: Context, rule: Rule) -> list[Finding]:
 
     denied: list[tuple[str, str]] = []      # (path, 命中的模式)
     outside: list[str] = []
-    for path in affected:
+    for path in targets:
         hit = _first_match(path, deny)
         if hit is not None:
             denied.append((path, f"task.deny:{hit}"))
@@ -121,10 +127,10 @@ def scope(ctx: Context, rule: Rule) -> list[Finding]:
             Finding(
                 rule=rule.id, status=Status.PASS, subject="(改动文件)",
                 message=(
-                    f"{len(affected)} 个改动文件全部在范围内"
+                    f"{len(targets)} 个改动文件全部在范围内"
                     + (f"（{len(allow)} 条 allow 模式）" if allow else "（allow 未限定，仅受 deny 约束）")
                 ),
-                observed=len(affected), threshold=len(affected), level="info",
+                observed=len(targets), threshold=len(targets), level="info",
             )
         )
     return findings
@@ -155,7 +161,7 @@ def diff_budget(ctx: Context, rule: Rule) -> list[Finding]:
         min_lines = int(rule.get("min_changed_lines", 0))
         source = "spec 默认（无任务契约）"
 
-    lines = ctx.git.lines_changed()
+    lines = ctx.git.lines_changed(ctx.affected())   # 只算参与判定的文件（不含 build/** 等）
     affected = ctx.affected()
     files = len(affected)
     added, deleted = ctx.git.added(), ctx.git.deleted()

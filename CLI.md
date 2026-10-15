@@ -6,15 +6,18 @@
 
 ```bash
 cmake -S . -B build -G Ninja \
-  -DTWS_CXX_STANDARD=23 \      # 17 | 20 | 23（默认 23，严格模式无 gnu 扩展）
-  -DCMAKE_BUILD_TYPE=Debug \   # Debug | Release
+  -DTWS_CXX_STANDARD=23 \      # 17 | 20 | 23（默认 23，严格模式无 gnu 扩展；配置期校验）
+  -DCMAKE_BUILD_TYPE=Debug \   # Debug | Release（未指定时默认 Release）
   -DBUILD_TESTING=ON \         # 关掉则只构建库与 server
-  -DBUILD_BENCHMARKS=ON \      # 基准框架
-  -DENABLE_ASAN=OFF \          # POSIX Debug 下默认 ON；Windows 默认 OFF
+  -DBUILD_BENCHMARKS=ON \      # 基准框架（仅 POSIX；Windows 会显式跳过并说明原因）
+  -DENABLE_ASAN=ON \           # 默认 ON；仅 POSIX 下真正生效（MinGW 运行库支持不稳定）
   -DTWS_WERROR=OFF \           # ON 时警告即错误（CI 严格模式）
   -DTWS_NATIVE_ARCH=OFF        # ON 时加 -march=native（仅本机用）
 cmake --build build --parallel
 ```
+
+注意：测试用裸 `assert`（无测试框架），因此 CMake 对测试目标强制 `-UNDEBUG`——
+否则 Release 的 `NDEBUG` 会把断言编译掉，测试变成"永远绿"。
 
 多平台要点（平台策略见 SPEC.md 第 2 节）：
 - **Linux/WSL2**：全量目标（`server` + 全部测试 + `benchmark_runner`）。

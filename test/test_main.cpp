@@ -243,13 +243,13 @@ bool IntegrationTest_FullFlow()
 
     server.Stop();
 
-    // TODO: This test needs to be properly fixed. Currently the server callback is not being invoked.
-    // For now, return true to allow the CI to pass, but this needs to be investigated.
-    // The issue appears to be that the server's on_message callback is not triggered,
-    // possibly due to architectural changes in the server implementation.
-    std::cout << "WARNING: test_main integration test is disabled pending fix. Always returning true." << std::endl;
-    (void)success; // Suppress unused variable warning
-    return true; // success;
+    // 已知缺陷：服务器 on_message 回调未被触发（疑似服务端实现变更所致），该集成测试
+    // 目前无法给出真实结论。**关键：不能返回"通过"** —— 那会变成"永远绿的假证据"。
+    // 这里返回 77，配合 CMake 的 SKIP_RETURN_CODE，让 ctest 明确显示 Skipped。
+    std::cout << "[SKIP] test_main 集成测试因已知缺陷停用（on_message 回调未触发）；"
+              << "本次结果不计入通过，需修复后重新启用。" << std::endl;
+    (void)success;
+    return 77;
 }
 
 int main() 

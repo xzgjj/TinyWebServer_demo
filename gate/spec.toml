@@ -23,14 +23,22 @@ task_dir            = "gate/tasks"            # 任务契约目录
 baseline_path       = "gate/baseline.json"    # 存量棘轮基线（ratchet 规则用）
 
 # 受保护路径：变更 -> CI-001，需要"非作者"审批
+# 注意：目录必须写 `dir/**` 而不是 `dir/` —— 后者会被当成字面量，永远匹配不到文件
+# （实测 `scripts/gate/` 与 `.github/workflows/` 曾因此完全失效）。
 protected_paths = [
     "gate/spec.toml",
-    "gate/protected_tests.json",
     "gate/baseline.json",
-    "scripts/gate/",
-    ".github/workflows/",
+    "gate/protected_tests.json",
+    "gate/tasks/**",
+    "scripts/gate/**",
+    ".github/workflows/**",
     "CODEOWNERS",
+    "CMakeLists.txt",
 ]
+
+# 允许"规则级"豁免（waiver 不限定文件）的规则白名单；其余规则必须限定 scope，
+# 否则一条针对 src/a.cpp 的例外会顺带豁免同一规则下其它文件的违规（实测确实可绕过）。
+rule_level_waiver_allowed = ["CI-001"]
 
 # 全门禁统一忽略（构建产物/第三方/结果目录），避免"工具输出"污染判定
 exclude_globs = [

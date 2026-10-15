@@ -2,9 +2,10 @@
 # TinyWebServer — 多标准 / 多编译器 / 多平台构建配置
 # -----------------------------------------------------------------------------
 # 设计要点（与门禁规则一一对应）：
-#   1. 标准可切换：TWS_CXX_STANDARD=17|20|23（默认 23），严格模式（无 gnu 扩展），
+#   1. 标准可切换：TWS_CXX_STANDARD=17|20|23（默认 23，配置期校验），严格模式（无 gnu 扩展），
 #      由 STD-001 白名单约束实际可用特性（见 doc/cxx_standard_matrix.md）。
-#   2. 平台可切换：WIN32 -> 使用 include/platform/win32 兼容层；否则 POSIX 原生。
+#   2. 平台二分：Windows 只构建可移植核心（PORTABLE_SOURCES），网络层（NETWORK_SOURCES）
+#      依赖 epoll/ET/SO_REUSEPORT，属 Linux 专有，显式跳过并打印原因（见 SPEC.md 第 2 节）。
 #   3. 警告策略与编译器绑定，不使用任何"只在某个编译器下存在"的裸 flag。
 #   4. 不依赖 bash/grep 等外部 shell 工具（Windows 与 WSL2 行为一致）。
 #   5. 测试按能力打标签：portable（跨平台可运行）与 socket（Windows 上运行验收在 WSL2）。
@@ -21,17 +22,33 @@ endif()
 # --- 0. 用户可配置选项 -------------------------------------------------------
 set(TWS_CXX_STANDARD "23" CACHE STRING "C++ 标准版本：17 / 20 / 23")
 set_property(CACHE TWS_CXX_STANDARD PROPERTY STRINGS 17 20 23)
+if(NOT TWS_CXX_STANDARD MATCHES "^(17|20|23)$")
+    # 不校验的话 `-DTWS_CXX_STANDARD=11` 会"配置成功"然后构建时才炸，报错点离病因很远
+    message(FATAL_ERROR "TWS_CXX_STANDARD 只能是 17 / 20 / 23，当前为 '${TWS_CXX_STANDARD}'")
+endif()
 
 option(TWS_WERROR        "把警告当错误（CI 严格模式）"            OFF)
 option(TWS_NATIVE_ARCH   "启用 -march=native（本机专用，CI 关闭）" OFF)
 option(TWS_ENABLE_CLANG_TIDY "构建时运行 clang-tidy（需已安装）"   OFF)
 
-option(ENABLE_ASAN "Debug 下启用 AddressSanitizer" ON)
+# ASan 默认值按平台区分：POSIX 下 Debug 默认开；MinGW 的 ASan 运行库支持不稳定，
+# Windows 默认关（要开需显式 -DENABLE_ASAN=ON 并自行确认 libasan 可用）。
+if(WIN32)
+    option(ENABLE_ASAN "Debug 下启用 AddressSanitizer" OFF)
+else()
+    option(ENABLE_ASAN "Debug 下启用 AddressSanitizer" ON)
+endif()
 option(ENABLE_UBSAN "启用 UndefinedBehaviorSanitizer" OFF)
 option(BUILD_BENCHMARKS "构建性能基准测试框架" ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "构建类型" FORCE)
+endif()
+
+# 严重坑：测试用裸 assert（无测试框架），而 Release 会定义 NDEBUG 把 assert 编译掉，
+# 于是"测试全绿"变成空转。这里显式告警，并在测试目标上强制 -UNDEBUG（见测试段落）。
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    message(WARNING "Release 构建会定义 NDEBUG 使 assert 失效；测试目标已强制 -UNDEBUG 以保证断言生效")
 endif()
 
 set(CMAKE_CXX_STANDARD ${TWS_CXX_STANDARD})
@@ -105,8 +122,6 @@ set(TWS_SANITIZE_FLAGS "")
 if(TWS_COMPILER_ID STREQUAL "gcc" OR TWS_COMPILER_ID STREQUAL "clang")
     if(ENABLE_ASAN AND NOT WIN32)
         list(APPEND TWS_SANITIZE_FLAGS -fsanitize=address)
-    elseif(ENABLE_ASAN AND WIN32)
-        message(STATUS "  提示       : Windows(MinGW) 下默认不启用 ASan（运行库支持不稳定），如需请显式 -DENABLE_ASAN=ON 并自行确认 libasan 可用")
     endif()
     if(ENABLE_UBSAN)
         list(APPEND TWS_SANITIZE_FLAGS -fsanitize=undefined)
@@ -328,12 +343,24 @@ if(BUILD_TESTING)
 
         add_executable(${test_name} test/${test_name}.cpp)
         target_link_libraries(${test_name} PRIVATE webserver_core project_configs nlohmann_json::nlohmann_json)
+        # 这 7 个测试文件用裸 assert 做断言（无 gtest），Release 下 NDEBUG 会让断言消失、
+        # 测试变成永远绿。强制撤销 NDEBUG，保证任何构建类型下断言都真实生效。
+        if(TWS_COMPILER_ID STREQUAL "gcc" OR TWS_COMPILER_ID STREQUAL "clang")
+            target_compile_options(${test_name} PRIVATE -UNDEBUG)
+        elseif(TWS_COMPILER_ID STREQUAL "msvc")
+            target_compile_options(${test_name} PRIVATE /UNDEBUG)
+        endif()
         if(${test_name} IN_LIST TESTS_NEEDING_GTEST)
             target_link_libraries(${test_name} PRIVATE GTest::gtest GTest::gtest_main)
         endif()
 
         add_test(NAME ${test_name} COMMAND ${test_name})
         set_tests_properties(${test_name} PROPERTIES TIMEOUT 90)
+        # test_main 因已知缺陷（on_message 回调未触发）返回 77，让 ctest 显示 Skipped
+        # 而不是 Passed —— 不允许"永远绿的假证据"混在通过列表里。
+        if(test_name STREQUAL "test_main")
+            set_tests_properties(${test_name} PROPERTIES SKIP_RETURN_CODE 77)
+        endif()
 
         set(labels "integration")
         if(${test_name} IN_LIST TESTS_SMOKE)

@@ -2,6 +2,7 @@
   "generated_at": "2026-01-01T00:00:00+0000",
   "generator": "gate/fixtures/DOC-001 (手工夹具)",
   "doc_chars": {
+    "CLAUDE.md": 3000,
     "implementation_plan.md": 739
   },
   "warnings": {

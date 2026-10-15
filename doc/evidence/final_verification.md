@@ -57,7 +57,38 @@ SKIP 语义：夹具依赖的工具缺失时，"无法验证"与"规则失效"�
 | 7 | 门禁自身 | 负向夹具被当成产品代码扫描（QUAL-002/STD-001 报夹具"违规"） | `meta.exclude_globs` 增加 `gate/fixtures/**` |
 | 8 | 门禁自身 | `selftest.py` 内嵌规格与 `spec.toml` 漂移（改 spec 未同步镜像） | 同步镜像（该校验本身就是防漂移设计） |
 
-## 5. 已知边界（诚实声明，不掩饰）
+## 5. R3 交叉审查后的修复与状态（2026-10-15 第二轮）
+
+两轮独立审查（构建侧 / 门禁侧）共提出 20+ 条带证据的问题，已修其中影响最大的：
+
+| # | 审查发现 | 证据 | 处置 |
+|---|---|---|---|
+| 1 | **Release 下测试裸 assert 被 NDEBUG 剥离 → 测试永远绿** | 7 个测试文件 108 处 assert；Release 下 `assert(false)` 变 no-op、exit 0 | CMake 对测试目标强制 `-UNDEBUG` + Release 配置告警；`test_cpp_compat` 增加独立失败计数与退出码（实测 21 个测试编译单元全部带 `-UNDEBUG`） |
+| 2 | **CI-001 对 `scripts/gate/` 与 `.github/workflows/` 永不生效**（尾部 `/` 被当字面量，模式不可达） | 实测两路径 `protected=False`；改引擎文件可无痕绕过 | 模式改为 `scripts/gate/**`、`.github/workflows/**`，并把 `gate/tasks/**`、`CMakeLists.txt` 纳入保护；实测现已正确命中 |
+| 3 | **CI gate job 缺 `--task` → 每次必红**（会被当噪声忽略） | 同样命令行实测 exit 1 / SCOPE-001 | CLI 支持 `--task auto`（取最近更新的契约）；workflow 改用 auto |
+| 4 | **range 模式 diff 失败 = 空改动集 → 静默全绿** | `--base <全0 SHA>..HEAD` 实测 pass/exit 0 | `GitFacts.available` 在 diff 非零返回时置否；SCOPE 类规则改为 ERROR 而非 PASS |
+| 5 | **删除文件与未跟踪目录对范围检查不可见** | 删 `public/index.html`、新建 3000 行未跟踪目录均实测 pass | 范围判定改用 `git.changed`（含删除），未跟踪用 `-uall` 展开；SCOPE-002 行数只统计参与判定的文件 |
+| 6 | **例外是规则级豁免**（限定 scope 的 waiver 会顺带豁免同规则其它文件） | 实测一条 scope=[src/a.cpp] 的例外豁免了 LICENSE 变更 | `apply_waivers` 改为按 finding 路径匹配 scope；未限定 scope 的例外只对白名单规则（CI-001）生效 |
+| 7 | **selftest 规格漂移检测只比键不比数值**（17/17 验的可能是另一条规则） | 内嵌镜像与真实 spec 已在 budgets/grandfathered/default_deny 上分歧 | 漂移检测递归比较值；镜像同步为真实 spec；DOC-001 夹具改为走真实存在的棘轮分支 |
+| 8 | **`test_main` 无条件 `return true`**（永久绿的假证据） | 源码注释自承 "Always returning true" | 改为返回 77 + `SKIP_RETURN_CODE`，ctest 明确显示 Skipped 而非 Passed |
+| 9 | 文档夸大与不一致 | `doc/cxx_standard_matrix.md` 引用不存在的 build/ 产物；CMake 头注释仍写已删除的兼容层；CLI.md 的 ASan 默认值说法与实现不符 | 逐条修正；CMake 增加 `TWS_CXX_STANDARD` 配置期校验与 ASan 平台化默认值 |
+
+## 6. 最终门禁状态（需要人批准，属预期设计）
+
+```
+⛔ 门禁 HALTED  task=v8-cpp23-gates  attempt=4/3
+   pass=11  warn=1  manual=1  block=2  halted=1
+   ✗ SCOPE-002  改动 16228 行 > 契约预算 13000 行
+   ⏸ TEST-001   2 个受保护测试被修改，需非作者审批
+   ✗ CI-001     受保护路径（规则/引擎/CI/基线）变更，需非作者审批
+   ⛔ GOV-001    连续失败 3 次达上限 → 停止自动重试，需人工 reset
+```
+
+这不是"没做完"，而是门禁的**设计终点**：剩下的事都必须由人（且不是写作者本人）决定。
+解锁命令见最终汇报。
+
+## 7. 已知边界（诚实声明，不掩饰）
+
 
 1. **本地无法强制"批准者≠作者"**：本地 git 身份只有 `xzgjj`，
    代理与人类作者不可区分；真正的强制在 GitHub 分支保护 + `CODEOWNERS`。

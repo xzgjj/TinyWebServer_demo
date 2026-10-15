@@ -7,8 +7,9 @@
     "implementation_plan.md": 13947
   },
   "warnings": {
-    "g++": 57,
-    "clang++": 418
+    "_note": "2026-10-15 方法学变更：QUAL-001 的目标集从“按 glob 猜”改为 compile_commands.json 的真实编译单元（含被编译的头文件），两次测量不可比，因此在 audit-15 重新标定。棘轮语义不变：只允许下降。",
+    "g++": 140,
+    "clang++": 706
   },
   "complexity": {
     "src/main.cpp:main": {

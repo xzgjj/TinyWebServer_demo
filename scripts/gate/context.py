@@ -114,6 +114,13 @@ def collect_git(root: Path, ref_range: str = "") -> GitFacts:
         except (OSError, subprocess.SubprocessError):
             return ""
 
+    def out_rc(*args: str) -> tuple[int, str]:
+        try:
+            r = _run(["git", *args], root)
+            return r.returncode, (r.stdout or "")
+        except (OSError, subprocess.SubprocessError):
+            return 128, ""
+
     facts.commit = out("rev-parse", "--short", "HEAD").strip()
     facts.available = bool(facts.commit)
     facts.commit_subject = out("log", "-1", "--pretty=%s").strip()
@@ -122,11 +129,17 @@ def collect_git(root: Path, ref_range: str = "") -> GitFacts:
     facts.author_email = out("config", "user.email").strip()
 
     if ref_range:
-        ns = out("diff", "--numstat", ref_range)
-        names = out("diff", "--name-status", ref_range)
+        ns_rc, ns = out_rc("diff", "--numstat", ref_range)
+        names_rc, names = out_rc("diff", "--name-status", ref_range)
+        # 关键：range 模式下如果 git diff 本身失败（例如 CI 首次 push 的 before 是全 0 SHA、
+        # 或 base 不存在），旧实现会静默返回空串 → "改动集为空" → 范围/预算类规则全绿。
+        # 那是"什么都看不见却通过"。这里显式标记为不可信，由 SCOPE 类规则判 ERROR。
+        if ns_rc != 0 or names_rc != 0:
+            facts.available = False
     else:
         ns = out("diff", "--numstat", "HEAD")
-        names = out("status", "--porcelain")
+        # -uall：把未跟踪目录展开成具体文件（默认会折叠成 "?? dir/"，导致新增目录不可见）
+        names = out("status", "--porcelain", "-uall")
 
     for line in ns.splitlines():
         parts = line.split("\t")

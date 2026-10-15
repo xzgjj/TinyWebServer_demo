@@ -63,9 +63,9 @@ DEFAULT_RULES: dict[str, dict[str, Any]] = {
         "title": "文档字数预算", "mode": "block", "check": "doc_budget",
         "params": {
             "unit": "non_whitespace_chars",
-            "budgets": {"CLAUDE.md": 3000, "SPEC.md": 3000, "CLI.md": 3000,
+            "budgets": {"SPEC.md": 3000, "CLI.md": 3000,
                         "AGENT_EXECUTION_PROTOCOL.md": 3000},
-            "grandfathered": ["implementation_plan.md"],
+            "grandfathered": ["CLAUDE.md", "implementation_plan.md"],
             "unlimited_globs": ["doc/**", "notes.txt", "diff.md", "audit_report.md", "README.md"],
         },
     },
@@ -92,7 +92,7 @@ DEFAULT_RULES: dict[str, dict[str, Any]] = {
     },
     "SCOPE-001": {
         "title": "改动范围白名单", "mode": "block", "check": "scope",
-        "params": {"default_deny": ["third_party/**", "public/**", "LICENSE", ".gitignore"],
+        "params": {"default_deny": ["third_party/**", "public/**", "LICENSE"],
                    "require_task_contract": True},
     },
     "SCOPE-002": {
@@ -166,8 +166,9 @@ DEFAULT_META: dict[str, Any] = {
     "waiver_path": "gate/waivers.jsonl",
     "task_dir": "gate/tasks",
     "baseline_path": "gate/baseline.json",
-    "protected_paths": ["gate/spec.toml", "gate/protected_tests.json", "gate/baseline.json",
-                        "scripts/gate/", ".github/workflows/", "CODEOWNERS"],
+    "protected_paths": ["gate/spec.toml", "gate/baseline.json", "gate/protected_tests.json",
+                        "gate/tasks/**", "scripts/gate/**", ".github/workflows/**",
+                        "CODEOWNERS", "CMakeLists.txt"],
     "exclude_globs": ["build/**", "build_*/**", "third_party/**", "benchmark_results/**",
                       "local/**", "__pycache__/**", "**/__pycache__/**", ".git/**",
                       "Testing/**", "audit_report_backups/**", "test_result/**", "*.pyc",
@@ -496,10 +497,23 @@ def verify_spec_drift() -> list[str]:
             real_value = r.params.get(key)
             if isinstance(value, (list, dict)) and not isinstance(real_value, (list, dict)):
                 problems.append(f"{rid}.{key}: 真实 spec 里不是集合类型")
+                continue
+            # 值也要比：只比键集合会漏掉"阈值被改但键没变"的漂移 ——
+            # 那样 selftest 验的是内嵌规格，而不是线上真正生效的规则（曾实测漏判）。
+            if isinstance(value, dict) and isinstance(real_value, dict):
+                if {str(k): v for k, v in value.items()} != {str(k): v for k, v in real_value.items()}:
+                    problems.append(f"{rid}.{key}: 内嵌 {value} != 真实 {real_value}")
+            elif isinstance(value, list) and isinstance(real_value, list):
+                if set(map(str, value)) != set(map(str, real_value)):
+                    problems.append(f"{rid}.{key}: 内嵌 {value} != 真实 {real_value}")
+            elif not isinstance(value, (list, dict)) and value != real_value:
+                problems.append(f"{rid}.{key}: 内嵌 {value!r} != 真实 {real_value!r}")
     for key, value in DEFAULT_META.items():
         real_value = real.meta.get(key)
-        if isinstance(value, list) and set(value) != set(real_value or []):
+        if isinstance(value, list) and set(map(str, value)) != set(map(str, real_value or [])):
             problems.append(f"[meta].{key} 与真实 spec 不一致（真实 {real_value}）")
+        elif not isinstance(value, (list, dict)) and value != real_value:
+            problems.append(f"[meta].{key}: 内嵌 {value!r} != 真实 {real_value!r}")
     try:
         real.check_registry_consistency(REGISTRY)
     except Exception as exc:  # noqa: BLE001

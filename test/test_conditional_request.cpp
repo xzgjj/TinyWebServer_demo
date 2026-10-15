@@ -140,6 +140,16 @@ void TestIfNoneMatch() {
     auto file_stat = ConditionalRequestHandler::GetFileStat(test_file);
     assert(file_stat.has_value());
 
+    // 回归断言：同一文件连续两次取 stat 必须得到**完全一致**的 ETag 与秒级时间戳。
+    // 背景：原实现每次调用都重新采样 file_clock::now() 与 system_clock::now() 做跨时钟
+    // 换算，秒级截断后同一文件可能先后得到相差 1 秒的 ETag，导致 If-None-Match 误判
+    // （Windows 上稳定复现 304 判定抖动）。修复后必须由断言守住，否则回归无法证伪。
+    auto file_stat_again = ConditionalRequestHandler::GetFileStat(test_file);
+    assert(file_stat_again.has_value());
+    assert(file_stat_again->etag == file_stat->etag);
+    assert(std::chrono::time_point_cast<std::chrono::seconds>(file_stat_again->last_modified) ==
+           std::chrono::time_point_cast<std::chrono::seconds>(file_stat->last_modified));
+
     // 2. 测试 If-None-Match 匹配当前 ETag
     auto request1 = CreateHttpRequestWithHeaders("GET", "/test", {{"If-None-Match", file_stat->etag}});
 

@@ -13,8 +13,13 @@ bin/
 /bench.log
 *.log
 
-# IDE & 编辑器
-.vscode/
+# IDE & 编辑器：只忽略个人本地配置，团队共享的编辑器契约要入库
+# （Problems 面板依赖 c_cpp_properties.json/settings.json，任务依赖 tasks.json）
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/c_cpp_properties.json
+!.vscode/extensions.json
 .idea/
 *.swp
 *.save
@@ -43,3 +48,6 @@ integration_test.log
 __pycache__/
 *.pyc
 gate/index.db
+CLI.md
+CLI.md
+CMakeLists.txt

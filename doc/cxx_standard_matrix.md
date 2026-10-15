@@ -1,8 +1,7 @@
 # C++ 标准特性矩阵（实测）
 
-> 生成方式：`build/feature_matrix.sh <编译器> <标准>`，逐特性 `-fsyntax-only` 试编译。
-> 原始输出：`build/feature_matrix_out.txt`（本机实跑，非推断）。
-> 用途：**门禁规则 STD-001 的白名单依据**。任何人修改白名单，必须更新本文件并重跑矩阵。
+> 生成方式：`bash scripts/feature_matrix.sh <编译器> <标准>`，逐特性 `-fsyntax-only` 试编译。
+> 用途：**门禁规则 STD-001 的白名单依据**。任何人修改白名单，必须重跑矩阵并更新本文件。
 
 ## 一、测试环境（4 工具链）
 

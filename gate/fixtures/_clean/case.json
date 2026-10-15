@@ -16,23 +16,17 @@
   "git": {
     "changed": [
       "src/main.cpp",
-      "CMakeLists.txt",
       "CLAUDE.md",
       "test/test_basic.cpp"
     ],
     "status_map": {
       "src/main.cpp": "M",
-      "CMakeLists.txt": "M",
       "CLAUDE.md": "M",
       "test/test_basic.cpp": "M"
     },
     "numstat": {
       "src/main.cpp": [
         25,
-        0
-      ],
-      "CMakeLists.txt": [
-        18,
         0
       ],
       "CLAUDE.md": [
@@ -48,8 +42,7 @@
   "mtime_now": [
     "build/Testing/Temporary/LastTest.log",
     "src/main.cpp",
-    "CMakeLists.txt",
     "gate/baseline.json"
   ],
-  "note": "gate/baseline.json 与 gate/protected_tests.json 不列入 changed：它们是门禁自身基线，且属受保护路径（改它们自然会触发 CI-001）"
+  "note": "changed 刻意不含受保护路径（gate/baseline.json、gate/protected_tests.json、CMakeLists.txt 等）：改它们本就会触发 CI-001，放进'干净场景'会变成预期的红而不是误报"
 }

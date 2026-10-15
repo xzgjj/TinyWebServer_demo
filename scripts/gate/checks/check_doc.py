@@ -293,8 +293,18 @@ _WHOLE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_./+\-]+$")
 _URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:")
 
 
+def _is_gitignored(ctx: Context, rel_path: str) -> bool:
+    """该文件是否被 git 忽略（= 对仓库而言并不存在）。"""
+    proc = ctx.run(["git", "check-ignore", "-q", rel_path], timeout=15)
+    return proc.returncode == 0
+
+
 def doc_refs(ctx: Context, rule: Rule) -> list[Finding]:
-    """文档里点名的仓库内文件必须真实存在；CLAUDE.md 声明的标准必须等于 CMake 实际默认标准。"""
+    """文档里点名的仓库内文件必须真实存在；CLAUDE.md 声明的标准必须等于 CMake 实际默认标准。
+
+    被 git 忽略的本地私有文档不参与引用一致性检查（对仓库而言它不存在），
+    但仍受 DOC-001 字数预算约束 —— 避免门禁去审一份别人 clone 下来根本没有的文件。
+    """
     findings: list[Finding] = []
     docs: list[str] = list(rule.get("docs") or [])
     check_paths = bool(rule.get("check_paths", True))
@@ -305,6 +315,11 @@ def doc_refs(ctx: Context, rule: Rule) -> list[Finding]:
     for name in docs:
         if ctx.read(name) is None:
             missing_docs.append(name)
+        elif _is_gitignored(ctx, name):
+            # 本地私有文档（如被 .gitignore 排除的 AGENT_EXECUTION_PROTOCOL.md）：
+            # 对**仓库**而言它不存在，拿它的内容判定"文档-代码一致性"是自欺欺人。
+            # 这类文档仍受 DOC-001 字数预算约束，但不参与引用一致性检查。
+            continue
         else:
             present_docs.append(name)
 

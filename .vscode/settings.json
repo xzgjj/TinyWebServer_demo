@@ -1,0 +1,31 @@
+{
+    "python.testing.pytestArgs": [
+        "test"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+    "C_Cpp.default.cppStandard": "c++23",
+    "C_Cpp.default.intelliSenseMode": "linux-gcc-x64",
+    "C_Cpp.errorSquiggles": "enabled",
+
+    "files.associations": {
+        "*.h": "cpp",
+        "*.tpp": "cpp",
+        "*.ipp": "cpp"
+    },
+    "files.exclude": {
+        "**/build*/": true,
+        "**/__pycache__": true,
+        "**/benchmark_results": true,
+        "**/.pulse.json": true
+    },
+    "search.exclude": {
+        "**/build*/": true,
+        "**/third_party": true,
+        "**/benchmark_results": true
+    },
+    "files.eol": "\n",
+    "terminal.integrated.cwd": "${workspaceFolder}"
+}

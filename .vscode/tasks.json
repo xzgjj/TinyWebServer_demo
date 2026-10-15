@@ -1,0 +1,64 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cmake: configure (c++23)",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "-S", ".",
+        "-B", "build",
+        "-G", "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DTWS_CXX_STANDARD=23",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_BENCHMARKS=ON"
+      ],
+      "problemMatcher": [],
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      "label": "cmake: build",
+      "type": "shell",
+      "command": "cmake",
+      "args": ["--build", "build", "--parallel"],
+      "problemMatcher": ["$gcc"],
+      "group": "build"
+    },
+    {
+      "label": "ctest: 全量",
+      "type": "shell",
+      "command": "ctest",
+      "args": ["--test-dir", "build", "--output-on-failure"],
+      "problemMatcher": []
+    },
+    {
+      "label": "ctest: portable",
+      "type": "shell",
+      "command": "ctest",
+      "args": ["--test-dir", "build", "-L", "portable", "--output-on-failure"],
+      "problemMatcher": []
+    },
+    {
+      "label": "gate: run",
+      "type": "shell",
+      "command": "python",
+      "args": ["tools.py", "gate", "run", "--task", "v8-cpp23-gates", "--serial"],
+      "problemMatcher": []
+    },
+    {
+      "label": "gate: selftest（该红时必须红）",
+      "type": "shell",
+      "command": "python",
+      "args": ["tools.py", "gate", "selftest"],
+      "problemMatcher": []
+    },
+    {
+      "label": "ci-local: 构建 + ctest + 门禁",
+      "type": "shell",
+      "command": "python",
+      "args": ["tools.py", "ci-local", "--std", "23"],
+      "problemMatcher": ["$gcc"]
+    }
+  ]
+}

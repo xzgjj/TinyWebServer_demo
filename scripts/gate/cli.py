@@ -108,6 +108,17 @@ def _print(text: str = "") -> None:
 # --------------------------------------------------------------------------- #
 def cmd_run(args: argparse.Namespace) -> int:
     root = resolve_root(args)
+    spec_path = resolve_spec(args, root)
+    spec = Spec.load(spec_path)
+    # `--task auto`（或不传）时取 gate/tasks/ 里最近更新的契约。
+    # 为什么需要：CI 不传 --task 会让 SCOPE-001 "无契约即阻断" 每次都红，
+    # 门禁随即被当成噪声忽略 —— 那等于没有门禁。
+    task_id = args.task
+    if not task_id or str(task_id).lower() == "auto":
+        picked, _path = _pick_task(root, spec, None)
+        task_id = picked.id if picked is not None else None
+        if task_id is None:
+            _print("⚠ 未找到任何任务契约（gate/tasks/*.json）：本次将按 SCOPE-001 阻断处理")
     options = {
         "base": args.base,
         "serial": bool(args.serial),
@@ -117,7 +128,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "no_ledger": bool(args.no_ledger),
         "write_reports": True,
     }
-    rep = runner.run_gate(root, resolve_spec(args, root), args.task, options)
+    rep = runner.run_gate(root, spec_path, task_id, options)
     if args.as_json:
         _print(rep.to_json())
     else:
@@ -455,7 +466,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="<命令>")
 
     p_run = sub.add_parser("run", parents=[common], help="跑一次门禁并落盘报告/账本")
-    p_run.add_argument("--task", default=None, help="任务契约 ID（gate/tasks/<ID>.json）")
+    p_run.add_argument("--task", default="auto",
+                       help="任务契约 ID；auto（默认）= 取 gate/tasks/ 里最近更新的一份")
     p_run.add_argument("--base", default=None, metavar="A..B", help="CI 模式：只判定 A..B 区间")
     p_run.add_argument("--serial", action="store_true", help="关闭并发（规则串行执行）")
     p_run.add_argument("--skip-heavy", action="store_true", help="跳过需要编译的重规则（标 warn）")
