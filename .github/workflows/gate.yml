@@ -165,6 +165,19 @@ jobs:
           code="${{ steps.gate.outcome }}"
           echo "门禁结果标记: $code"
           if [ "$code" != "success" ]; then
-            echo "::error::门禁未通过。例外必须由非作者在 gate/waivers.jsonl 中批准（CI-001）。"
+            echo "::error::门禁未通过。下面的待批准项与命令是**可直接执行**的下一步："
+            echo "---- 待批准例外 ----"
+            python3 scripts/gate/cli.py exception list --pending || true
+            echo "---- 任务状态（HALTED 时必须人工 reset）----"
+            python3 scripts/gate/cli.py status || true
+            echo "---- 可执行命令 ----"
+            echo "  # 1) 批准例外（批准人必须 ≠ 申请人、且 ≠ 变更作者）"
+            echo "  python tools.py gate exception approve --id <上面的 waiver id> --by <你的身份>"
+            echo "  # 2) 若已 HALTED（重试超限），人工解锁"
+            echo "  python tools.py gate reset --task <task id> --reason \"已复核\""
+            echo "  # 3) 重新判定"
+            echo "  python tools.py gate run --task auto --base <base>..HEAD --serial"
+            echo "说明：本例外的意义是「规则文件变更必须由非作者批准」；"
+            echo "     若唯一审批人与变更作者是同一身份，请先按 AGENT_EXECUTION_PROTOCOL.md 第 4 节统一身份模型。"
             exit 1
           fi

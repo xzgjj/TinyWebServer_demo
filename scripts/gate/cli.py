@@ -366,7 +366,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 def cmd_exception_request(args: argparse.Namespace) -> int:
     root = resolve_root(args)
     spec = load_spec(root, args)
-    facts = collect_git(root)
+    facts = collect_git(root, args.base or "")
     requester = args.by or facts.author_name or os.environ.get("USERNAME") or "unknown"
 
     scope = _split_list(args.scope)
@@ -374,6 +374,8 @@ def cmd_exception_request(args: argparse.Namespace) -> int:
         # 默认取"当前改动里命中受保护路径的文件"。
         # 为什么必须默认：rule_guard 要求 waiver 的 scope 命中受保护文件才认账，
         # 而不带 scope 的申请即使被批准也永远不生效（实测：先 block 再说"没有任何 waiver 覆盖"）。
+        # 注意 --base：CI 与区间审查看的是提交区间，不是工作区；不传 --base 时
+        # 工作区可能已经没有改动（都已提交），scope 会算成空 -> 例外无效。
         scope = [p for p in facts.changed if match_any(p, spec.protected_paths)]
 
     w = waivers.request(
@@ -575,6 +577,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_wr.add_argument("--rule", required=True, help="规则 ID，如 DOC-001")
     p_wr.add_argument("--reason", required=True, help="为什么必须越轨")
     p_wr.add_argument("--task", default=None, help="关联任务 ID")
+    p_wr.add_argument("--base", default="",
+                      help="按提交区间计算默认范围（如 origin/main..HEAD）；不传则按工作区改动")
     p_wr.add_argument("--ttl-days", type=int, default=None, help="有效天数（默认取规则/CI-001 的 waiver_max_age_days）")
     p_wr.add_argument("--by", default=None, help="申请人（默认取 git user.name）")
     p_wr.add_argument("--scope", default=None, metavar="GLOBS", help="仅对匹配文件生效，逗号分隔")
