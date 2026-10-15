@@ -1,4 +1,27 @@
-﻿## 2026-10-15 (audit-03 .. audit-12：C++23 多编译器 + 门禁系统)
+## 2026-10-15 (audit-24 .. audit-25：门禁四处"相变缺陷"修正 → CI 全绿)
+
+### 涉及文件（按提交）
+1. `scripts/gate/context.py` - 新增 `GitFacts.status_of()`、`Context.protected_new/modified()`、
+   `Context.bootstrap_mode()`（判据=spec 与引擎在基线里的 git 状态是否都为 A）
+2. `scripts/gate/checks/check_governance.py` - CI-001 自举期降级 WARN；仅对"已存在文件被改/删/改名"要求审批
+3. `scripts/gate/checks/check_tests.py` - TEST-001 三态：删除/用例下降=硬阻断，内容修改=WARN；新增 `block_on_delete`
+4. `scripts/gate/checks/check_scope.py` - 契约预算硬上限校验（`max_changed_lines_cap`/`max_changed_files_cap`）
+5. `scripts/gate/task.py` - `register_attempt(verdict, revision)` 同修订才累加；新增 `budget_rationale`、`last_failed_revision`
+6. `scripts/gate/runner.py` - `revision_fingerprint()`（提交+规格+工作区改动，排除 gate/tasks·ledger·waivers·local·build）
+7. `scripts/gate/selftest.py` - 镜像同步（SCOPE-002/TEST-001 params）+ `verify_attempt_counting()` 单元断言
+8. `gate/spec.toml` - TEST-001 三态参数、SCOPE-002 硬上限参数、desc 同步
+9. `gate/tasks/v8-cpp23-gates.json` - 预算 20000 + `budget_rationale`；allow 增 `.vscode/**`
+10. `gate/fixtures/CI-001/case_bootstrap.json`、`gate/fixtures/SCOPE-002/case_cap.json`、
+    `gate/fixtures/TEST-001/case_delete.json`(+files_delete) - 新增负向/正向夹具
+11. `.github/workflows/gate.yml` - 判定基线改为与默认分支的 merge-base；失败时打印待批准项与可执行命令
+12. `SPEC.md`（§1.1 四条语义约定）、`doc/gate_system_design.md`（§0.1 四处缺陷与修正）
+
+### 验证
+- `python scripts/gate/selftest.py` → 17/17
+- `python scripts/gate/cli.py run --task auto --base <merge-base>..HEAD --serial` → pass=13 warn=3 block=0（exit 0）
+- CI run 38735269539 → **10/10 job 全绿**（8 格构建矩阵 + 门禁自测 + 门禁判定）
+
+## 2026-10-15 (audit-03 .. audit-12：C++23 多编译器 + 门禁系统)
 
 ### 涉及文件（按提交）
 1. `CMakeLists.txt` - 标准可配置(TWS_CXX_STANDARD 17/20/23)+严格模式+按编译器分支 flag+
