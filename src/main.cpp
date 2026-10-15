@@ -5,6 +5,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "platform/fs_compat.h"   // mkdir：POSIX 带 mode，Windows 不带
 #include <fstream>
 #include "server.h"
 #include "http_response.h"
@@ -36,7 +37,7 @@ int main(int argc, char* argv[]) {
     // 1. 确保环境收敛：创建资源目录（构建时已创建，此处作为后备）
     struct stat st;
     if (stat("./public", &st) != 0) {
-        mkdir("./public", 0755);
+        tws::make_dir("./public", 0755);
     }
     // 确保默认首页存在（构建时已创建，此处作为后备）
     if (stat("./public/index.html", &st) != 0) {
@@ -50,13 +51,13 @@ int main(int argc, char* argv[]) {
 
     // 2. 确保日志目录存在（构建时已创建，此处作为后备）
     if (stat("./local", &st) != 0) {
-        mkdir("./local", 0755);
+        tws::make_dir("./local", 0755);
     }
     if (stat("./local/logs", &st) != 0) {
-        mkdir("./local/logs", 0755);
+        tws::make_dir("./local/logs", 0755);
     }
     if (stat("./local/logs/benchmark", &st) != 0) {
-        mkdir("./local/logs/benchmark", 0755);
+        tws::make_dir("./local/logs/benchmark", 0755);
     }
 
     // 先加载配置（若提供），供日志初始化使用（如队列上限）

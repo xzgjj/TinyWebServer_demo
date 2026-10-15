@@ -17,7 +17,10 @@
 #include "config/server_config.h"
 
 
-class HttpRequest;
+// 注意：不要在这里做全局 `class HttpRequest;` 前置声明。
+// http_request.h 通过 `using tinywebserver::HttpRequest;` 把该类型引入全局命名空间，
+// 再声明一个同名的全局类属于"声明与 using 目标冲突" —— GCC 容忍，Clang 直接报歧义
+// （见 [audit-05] 多编译器兼容修复）。
 class EventLoop;
 class StaticResource; // 确保 StaticResource 也能被识别
 namespace tinywebserver {

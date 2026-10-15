@@ -9,6 +9,31 @@ namespace tinywebserver {
 
 namespace fs = std::filesystem;
 
+namespace {
+
+/**
+ * @brief file_time_type -> system_clock::time_point 的确定性换算。
+ *
+ * 背景（[audit-05] 修复的真实缺陷）：
+ *   常见写法是 `ftime - file_clock::now() + system_clock::now()`，它在**每次调用**
+ *   都重新采样两个时钟。两个采样点之间的偏差会让"同一个文件"在不同时刻算出不同的
+ *   系统时间；ETag 只保留秒级精度，于是同一文件可能先后得到相差 1 秒的 ETag，
+ *   导致 If-None-Match 误判（304 判定抖动）。该问题在 Windows/MinGW 上稳定复现。
+ *
+ * 修法：两个时钟的固定偏移只测量一次（进程内常量），换算就变成确定性函数：
+ *   同一份 file_time -> 永远得到同一个 system_time。
+ */
+std::chrono::system_clock::time_point ToSystemTime(fs::file_time_type ftime) {
+    static const auto offset = std::chrono::system_clock::now().time_since_epoch() -
+                               std::chrono::duration_cast<std::chrono::system_clock::duration>(
+                                   fs::file_time_type::clock::now().time_since_epoch());
+    const auto ticks =
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(ftime.time_since_epoch());
+    return std::chrono::system_clock::time_point(ticks + offset);
+}
+
+}  // namespace
+
 std::pair<bool, std::string> ConditionalRequestHandler::ShouldReturn304(
     const HttpRequest& request,
     const fs::path& file_path) {
@@ -59,9 +84,8 @@ std::optional<ConditionalRequestHandler::FileStat> ConditionalRequestHandler::Ge
         auto ftime = fs::last_write_time(file_path);
         auto file_size = fs::file_size(file_path);
 
-        // 将 filesystem::file_time_type 转换为 system_clock::time_point
-        auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-            ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+        // 将 filesystem::file_time_type 转换为 system_clock::time_point（确定性换算，见 ToSystemTime）
+        auto sctp = ToSystemTime(ftime);
 
         FileStat stat{
             .last_modified = sctp,

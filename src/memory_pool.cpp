@@ -1,5 +1,6 @@
 #include "memory_pool.h"
 #include "Logger.h"
+#include "platform/mem_compat.h"   // 跨平台对齐分配（MinGW 无 std::aligned_alloc）
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
@@ -12,7 +13,7 @@ MemoryPool::Slab::Slab(size_t block_size, size_t block_count)
     : block_size(block_size), block_count(block_count), free_count(block_count) {
     // 分配对齐的内存块
     size_t total_size = block_size * block_count;
-    memory = std::aligned_alloc(alignof(std::max_align_t), total_size);
+    memory = tws::aligned_alloc_bytes(alignof(std::max_align_t), total_size);
     if (!memory) {
         LOG_ERROR("MemoryPool::Slab: Failed to allocate %zu bytes", total_size);
         throw std::bad_alloc();
@@ -27,7 +28,7 @@ MemoryPool::Slab::Slab(size_t block_size, size_t block_count)
 
 MemoryPool::Slab::~Slab() {
     if (memory) {
-        std::free(memory);
+        tws::aligned_free_bytes(memory);
         memory = nullptr;
     }
 }

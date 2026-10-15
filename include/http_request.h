@@ -3,6 +3,7 @@
 #ifndef HTTP_REQUEST_H
 #define HTTP_REQUEST_H
 
+#include <cstdint>   // int64_t：MinGW/Clang 下不保证由其它头间接引入（audit-05）
 #include <string>
 #include <unordered_map>
 
