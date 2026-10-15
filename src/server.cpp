@@ -11,6 +11,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include "platform/io_compat.h"
 #include <cstring>
 #include <cerrno>
 #include <functional>
@@ -36,12 +37,12 @@ int CreateListenSocket(unsigned short port, int backlog) {
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         LOG_ERROR("CreateListenSocket: bind() failed on port %d: %s (errno=%d)",
                   port, strerror(errno), errno);
-        close(fd);
+        tws::close_fd(fd);
         return -1;
     }
     if (listen(fd, backlog) < 0) {
         LOG_ERROR("CreateListenSocket: listen() failed: %s (errno=%d)", strerror(errno), errno);
-        close(fd);
+        tws::close_fd(fd);
         return -1;
     }
     LOG_INFO("CreateListenSocket: successfully created listen socket on port %d, fd=%d", port, fd);
@@ -120,7 +121,7 @@ Server::Server(const std::shared_ptr<tinywebserver::ServerConfig>& config,
 Server::~Server() {
     Stop();
     if (listen_fd_ >= 0) {
-        close(listen_fd_);
+        tws::close_fd(listen_fd_);
     }
     // MultiListenSocket 会自动关闭所有socket
 }

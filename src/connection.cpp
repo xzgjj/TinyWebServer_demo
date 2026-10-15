@@ -12,6 +12,7 @@ using namespace tinywebserver;
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/uio.h> // writev
+#include "platform/io_compat.h"  // fd I/O 统一入口（Windows 上 socket 不是 CRT fd）
 
 
 Connection::Connection(int fd, EventLoop* loop,
@@ -40,7 +41,7 @@ Connection::Connection(int fd, EventLoop* loop,
 
 Connection::~Connection() {
     LOG_DEBUG("Connection dtor fd=%d", fd_);
-    ::close(fd_);
+    tws::close_fd(fd_);
 }
 
 void Connection::ConnectEstablished() {
@@ -136,7 +137,7 @@ void Connection::SendResourceInLoop(std::shared_ptr<StaticResource> res) {
 void Connection::HandleRead(int fd) {
     char buf[4096];
     while (true) {
-        ssize_t n = ::read(fd, buf, sizeof(buf));
+        ssize_t n = tws::read_fd(fd, buf, sizeof(buf));
         if (n > 0) {
             input_buffer_.append(buf, n);
             UpdateActivityTimestamp();  // 更新活动时间戳
@@ -215,7 +216,7 @@ void Connection::ShutdownInLoop() {
     
     // 只有当缓冲区为空时才真正关闭写端
     if (output_buffer_.IsEmpty()) {
-        ::shutdown(fd_, SHUT_WR);
+        tws::shutdown_fd(fd_, SHUT_WR);
     } else {
         // 还有数据没发完，HandleWrite 发完后会再次调用 ShutdownInLoop
         LOG_INFO("Shutdown pending, waiting buffer drain... fd=%d", fd_);

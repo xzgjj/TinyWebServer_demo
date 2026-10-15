@@ -6,6 +6,7 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include "platform/io_compat.h"
 
 #include <cerrno>
 #include <cstring>
@@ -121,7 +122,7 @@ int MultiListenSocket::GetSocketFd(size_t index) const {
 void MultiListenSocket::CloseAll() {
     for (int fd : socket_fds_) {
         if (fd >= 0) {
-            ::close(fd);
+            tws::close_fd(fd);
         }
     }
     socket_fds_.clear();
@@ -151,7 +152,7 @@ int MultiListenSocket::CreateListenSocket(const std::string& ip, uint16_t port,
 
     // Set socket options
     if (!SetSocketOptions(fd, tcp_nodelay, tcp_cork)) {
-        ::close(fd);
+        tws::close_fd(fd);
         return -1;
     }
 
@@ -160,13 +161,13 @@ int MultiListenSocket::CreateListenSocket(const std::string& ip, uint16_t port,
 
     // Bind
     if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        ::close(fd);
+        tws::close_fd(fd);
         return -1;
     }
 
     // Listen
     if (::listen(fd, backlog) < 0) {
-        ::close(fd);
+        tws::close_fd(fd);
         return -1;
     }
 
@@ -207,6 +208,6 @@ bool MultiListenSocket::IsSOReusePortSupported() {
     int optval = 1;
     bool supported = (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval)) == 0);
 
-    ::close(fd);
+    tws::close_fd(fd);
     return supported;
 }
