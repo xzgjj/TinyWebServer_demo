@@ -32,26 +32,51 @@ BUILD_DIR = ROOT_DIR / "build"
 LOG_DIR = BUILD_DIR / "test_logs"
 
 def read_test_targets_from_cmake():
-    """从CMakeLists.txt中解析测试目标列表"""
+    """发现测试目标列表。
+
+    优先级（[audit-21] 修复：CMake 把 INTEGRATION_TESTS 拆成
+    TESTS_PORTABLE_TARGETS / TESTS_LINUX_TARGETS 后，旧正则抓不到任何目标，
+    会"0 个测试"跑空并生成一份全绿的假报告）：
+      1. 已配置的构建目录：`ctest -N` 是构建系统的权威测试清单（含平台过滤结果）；
+      2. 回退：从 CMakeLists.txt 解析所有 `set(TESTS_*_TARGETS ...)` 块（新旧变量名都认）。
+    """
     cmake_file = ROOT_DIR / "CMakeLists.txt"
     test_targets = []
-    
+
+    # 1) 首选 ctest -N：只有真正注册进 CTest 的目标才会跑，且自动反映平台差异
+    if (BUILD_DIR / "CTestTestfile.cmake").is_file() or (BUILD_DIR / "CMakeCache.txt").is_file():
+        try:
+            proc = subprocess.run(["ctest", "--test-dir", str(BUILD_DIR), "-N"],
+                                  capture_output=True, text=True, timeout=60)
+            for line in proc.stdout.splitlines():
+                m = re.match(r"\s*Test\s+#\d+:\s+(\S+)", line)
+                if m:
+                    test_targets.append(m.group(1))
+        except (OSError, subprocess.SubprocessError) as e:
+            print(f"[警告] ctest -N 失败，回退到解析 CMakeLists: {e}")
+
+    if test_targets:
+        return sorted(set(test_targets))
+
+    # 2) 回退：解析 CMakeLists 里的测试目标集合
     if not cmake_file.exists():
         print(f"[警告] 未找到CMakeLists.txt文件: {cmake_file}")
-        return ["test_timer", "test_lifecycle", "test_single_connection", "test_multi_connection", "test_stress"]
-    
+        return ["test_timer", "test_lifecycle", "test_single_connection",
+                "test_multi_connection", "test_stress"]
+
     try:
-        with open(cmake_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-            # 匹配 set(INTEGRATION_TESTS ...) 块
-            match = re.search(r'set\(INTEGRATION_TESTS(.*?)\)', content, re.DOTALL)
-            if match: 
-                targets = match.group(1).split()
-                test_targets.extend([t.strip() for t in targets if t.strip()])
+        content = cmake_file.read_text(encoding="utf-8")
+        for match in re.finditer(r"set\(\s*TESTS?_[A-Z_]*TARGETS?(.*?)\)", content, re.DOTALL):
+            for token in match.group(1).split():
+                token = token.strip()
+                if token.startswith("test_"):
+                    test_targets.append(token)
     except Exception as e:
         print(f"[错误] 解析CMakeLists.txt失败: {e}")
-    
-    return list(set(test_targets))
+
+    if not test_targets:
+        print("[警告] 未能从 CMakeLists.txt 解析出任何测试目标：请先 `python tools.py build`")
+    return sorted(set(test_targets))
 
 def setup_build_dir(clean=False):
     if clean and BUILD_DIR.exists():
@@ -87,20 +112,26 @@ def save_test_log(name, stdout, stderr, ret_code):
         f.write(stderr)
     return log_file
 
-def generate_audit_report(passed, failed):
+def generate_audit_report(passed, failed, skipped=None):
     """
     生成增强版审计报告
     1. 位置移动到根目录
     2. 增加性能指标和错误深度解析
+    3. [audit-21] 区分"通过 / 跳过 / 失败"三态：把跳过算成通过等于让失败消失
     """
+    skipped = skipped or []
     report_path = ROOT_DIR / "audit_report.md" # 修改：生成到根目录
     
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("# TinyWebServer 自动化审计与性能报告\n\n")
         f.write(f"- **生成时间:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        status_str = "❌ 存在失败项" if failed else "✅ 全部通过"
+        status_str = "❌ 存在失败项" if failed else "✅ 无失败项"
         f.write(f"- **项目状态:** {status_str}\n")
-        f.write(f"- **测试概览:** 通过 {len(passed)}, 失败 {len(failed)}\n\n")
+        f.write(f"- **测试概览:** 通过 {len(passed)}, 跳过 {len(skipped)}, 失败 {len(failed)}\n")
+        if skipped:
+            f.write(f"- **注意:** 跳过项（退出码 77）**不计入通过**，"
+                    "它们是需要修复后重新启用的已知缺陷\n")
+        f.write("\n")
         
         f.write("## 详细测试概览\n")
         # 扩展列：增加“性能指标/错误摘要”
@@ -109,19 +140,30 @@ def generate_audit_report(passed, failed):
         
         for name, metrics in passed:
             f.write(f"| {name} | ✅ 通过 | {metrics} | [Log](./build/test_logs/{name}.log) |\n")
+
+        for name, metrics in skipped:
+            f.write(f"| {name} | ⏭ 跳过（已知缺陷） | {metrics} | [Log](./build/test_logs/{name}.log) |\n")
         
         for name, reason, summary in failed:
             f.write(f"| {name} | ❌ {reason} | `<span style='color:red'>{summary}</span>` | [Log](./build/test_logs/{name}.log) |\n")
             
-        f.write("\n\n---\n*注：性能指标从标准输出中实时提取。若出现失败项(-6)，请检查日志中的 ASan 内存审计报告。*")
+        f.write("\n\n---\n*注：性能指标从标准输出中实时提取；"
+                "退出码 77 表示该测试被显式停用（跳过），必须修复后重新启用。*")
     
     print(f"\n>> 审计报告已更新: {report_path}")
 
 def find_test_executable(target):
-    # 递归查找可执行文件
-    for path in BUILD_DIR.rglob(target):
-        if path.is_file() and os.access(path, os.X_OK):
-            return path
+    """递归查找测试可执行文件。
+
+    [audit-21] 修复：Windows 上产物是 `test_xxx.exe`，原实现只按无扩展名匹配，
+    结果在 Windows 上永远找不到目标（"跳过"全部测试却仍生成审计报告）。
+    这里按"先精确、再带平台后缀"的顺序查找，并只在构建目录内搜索。
+    """
+    names = [target, f"{target}.exe"]
+    for name in names:
+        for path in BUILD_DIR.rglob(name):
+            if path.is_file() and path.parent != BUILD_DIR / "CMakeFiles":
+                return path
     return None
 
 def test(targets=None):
@@ -134,6 +176,7 @@ def test(targets=None):
     
     passed_tests = []
     failed_tests = []
+    skipped_tests = []          # 退出码 77 = 显式跳过（已知缺陷停用），既不算通过也不算失败
 
     # 启用 ASan 符号化输出环境变量
     env = os.environ.copy()
@@ -173,6 +216,11 @@ def test(targets=None):
             if result.returncode == 0:
                 print("✅")
                 passed_tests.append((t, metrics))
+            elif result.returncode == 77:
+                # 退出码 77 = 显式跳过（与 CMake 的 SKIP_RETURN_CODE 约定一致）。
+                # 必须与"通过"区分：把跳过算成通过，就是让失败消失。
+                print("⏭ [跳过]")
+                skipped_tests.append((t, metrics))
             else:
                 reason = f"失败({result.returncode})"
                 # 尝试从 stderr 提取 ASan 错误首行
@@ -200,7 +248,7 @@ def test(targets=None):
             print(f"💥 [异常: {e}]")
             failed_tests.append((t, "执行异常", str(e)))
 
-    generate_audit_report(passed_tests, failed_tests)
+    generate_audit_report(passed_tests, failed_tests, skipped_tests)
     return len(failed_tests) == 0
 
 def debug(target):

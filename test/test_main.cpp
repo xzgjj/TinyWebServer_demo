@@ -15,6 +15,10 @@
 #include <chrono>
 #include <thread>
 
+//: 与 CMake 的 SKIP_RETURN_CODE 约定一致：该测试因已知缺陷停用，
+//: 返回它表示"跳过"而不是"通过"（tools.py 与 ctest 都会据此区分）。
+static constexpr int SKIP_EXIT_CODE = 77;
+
 #include <sys/socket.h>   
 #include <netinet/in.h>   
 #include <arpa/inet.h>    
@@ -29,13 +33,13 @@
  * 3. 资源生命周期在 Connection 销毁时是否能正常回收
  * @return 测试是否通过
  */
-bool IntegrationTest_FullFlow()
+int IntegrationTest_FullFlow()   // 返回 0=通过 / 1=失败 / SKIP_EXIT_CODE=跳过（三态，不能再用 bool）
 {
     // 0. 环境准备：强制创建资源，防止 404
     int ret = system("mkdir -p ./www && echo 'Integration Test Body' > ./www/index.html");
     if (ret != 0) {
         std::cerr << "Failed to create test file: system() returned " << ret << std::endl;
-        return false;
+        return 1;
     }
 
     std::cout << "Created test file ./www/index.html" << std::endl;
@@ -112,7 +116,7 @@ bool IntegrationTest_FullFlow()
         if (server_error) {
             server.Stop();
         }
-        return false;
+        return 1;
     }
 
     // 给服务器更多时间初始化
@@ -155,7 +159,7 @@ bool IntegrationTest_FullFlow()
             std::cerr << "Failed to send request: " << (sent == 0 ? "connection closed" : strerror(errno)) << std::endl;
             close(client_fd);
             server.Stop();
-            return false;
+            return 1;
         }
 
         // 接收响应
@@ -260,12 +264,18 @@ int main()
     std::cout << "===== TinyWebServer V3 Integration Testing (Zero-Copy) =====" << std::endl;
     
     try {
-        if (IntegrationTest_FullFlow()) 
-        {
+        // 注意：不能用 `if (IntegrationTest_FullFlow())` —— 该函数返回的是**状态码**
+        // 而不是布尔值，77（SKIP）在布尔语境里为真，会被当成 PASSED 并 return 0。
+        // 这正是"假绿"的经典形态，第一次修复就踩到了（见 [audit-21]）。
+        const int rc = IntegrationTest_FullFlow();
+        if (rc == SKIP_EXIT_CODE) {
+            std::cout << "[RESULT] Integration Test: SKIPPED（已知缺陷未修，不计入通过）"
+                      << std::endl;
+            return SKIP_EXIT_CODE;   // 配合 CMake 的 SKIP_RETURN_CODE -> ctest 显示 Skipped
+        }
+        if (rc == 0) {
             std::cout << "[RESULT] Integration Test: PASSED" << std::endl;
-        } 
-        else 
-        {
+        } else {
             std::cerr << "[RESULT] Integration Test: FAILED" << std::endl;
             return EXIT_FAILURE;
         }
