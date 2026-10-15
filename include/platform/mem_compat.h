@@ -11,7 +11,9 @@
 
 #include <cstddef>
 
-#ifdef TWS_PLATFORM_WIN32
+// 判据用编译器自带的 _WIN32（而不是构建系统定义的宏）：
+// 兼容性需求来自 MinGW 的标准库缺 <cstdlib> 的 aligned_alloc，与是否"整套 Win32 平台层"无关。
+#ifdef _WIN32
 #include <malloc.h>
 #else
 #include <cstdlib>
@@ -24,7 +26,7 @@ inline void* aligned_alloc_bytes(std::size_t alignment, std::size_t size) {
     if (alignment < sizeof(void*)) {
         alignment = sizeof(void*);
     }
-#ifdef TWS_PLATFORM_WIN32
+#ifdef _WIN32
     return _aligned_malloc(size, alignment);
 #else
     void* ptr = nullptr;
@@ -40,7 +42,7 @@ inline void aligned_free_bytes(void* ptr) {
     if (ptr == nullptr) {
         return;
     }
-#ifdef TWS_PLATFORM_WIN32
+#ifdef _WIN32
     _aligned_free(ptr);
 #else
     std::free(ptr);

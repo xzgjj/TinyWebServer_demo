@@ -88,11 +88,23 @@
 
 ```bash
 # 特性矩阵（WSL）
-wsl -d Ubuntu -- bash /mnt/d/vsc_project/TinyWebServer_demo/build/feature_matrix.sh g++ c++23
+wsl -d Ubuntu -- bash /mnt/d/vsc_project/TinyWebServer_demo/scripts/feature_matrix.sh g++ c++23
 # 特性矩阵（Windows，MSYS2 UCRT64）
-C:\msys64\usr\bin\bash.exe -lc "export PATH=/ucrt64/bin:\$PATH; bash /d/vsc_project/TinyWebServer_demo/build/feature_matrix.sh clang++ c++23"
+C:\msys64\usr\bin\bash.exe -lc "export PATH=/ucrt64/bin:\$PATH; bash /d/vsc_project/TinyWebServer_demo/scripts/feature_matrix.sh clang++ c++23"
 
 # 构建矩阵（WSL）
-wsl -d Ubuntu -- bash /mnt/d/vsc_project/TinyWebServer_demo/build/verify_matrix.sh g++ 17 gcc
-wsl -d Ubuntu -- bash /mnt/d/vsc_project/TinyWebServer_demo/build/verify_matrix.sh clang++ 23 clang
+bash scripts/verify_matrix.sh g++ 17 wsl-gcc17
+bash scripts/verify_matrix.sh clang++ 23 wsl-clang23
+# 构建矩阵（Windows，MSYS2 UCRT64）
+bash scripts/verify_matrix.sh g++ 23 win-gcc23
 ```
+
+## 八、平台策略（2026-10-15 决策 B）
+
+Windows 不再提供网络层移植（`epoll/ET/SO_REUSEPORT` 为 Linux 专有；`WSAPoll` 是 O(n)，
+高并发需 IOCP = Proactor，违反架构约束）。因此：
+
+- **Windows 构建的是"可移植核心"**：配置 / 日志 / 指标 / 协议解析 / 请求校验 / 内存池 /
+  C++ 兼容层，共 17 个源文件 + 9 个 portable 测试；
+- Windows 上**不会**出现 `include/platform/win32/**` 这类 POSIX 头遮蔽层（已移除）；
+- 交集外特性在 Windows 上同样受 STD-001 约束 —— 因为 Windows 侧也走同一份 compat 层。

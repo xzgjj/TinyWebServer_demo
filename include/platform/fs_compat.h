@@ -9,7 +9,8 @@
 
 #include <sys/stat.h>
 
-#ifdef TWS_PLATFORM_WIN32
+// 判据用编译器自带的 _WIN32；本头文件只解决 mkdir 的元数差异，不依赖平台层。
+#ifdef _WIN32
 #include <direct.h>
 #else
 #include <sys/types.h>
@@ -17,9 +18,9 @@
 
 namespace tws {
 
-/// 创建目录：成功或"已存在"都返回 0，其余返回 -1。
+/// 创建目录：成功返回 0，失败（含已存在）返回 -1。
 inline int make_dir(const char* path, int mode) {
-#ifdef TWS_PLATFORM_WIN32
+#ifdef _WIN32
     (void)mode;
     return ::_mkdir(path);
 #else

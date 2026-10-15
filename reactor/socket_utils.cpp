@@ -8,7 +8,6 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include "platform/io_compat.h"
 
 #include <cerrno>
 #include <stdexcept>
@@ -57,13 +56,13 @@ int CreateListenSocket(unsigned short port, int backlog, bool tcp_nodelay, bool 
 
     if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0)
     {
-        tws::close_fd(fd);
+        ::close(fd);
         throw std::runtime_error("bind failed");
     }
 
     if (::listen(fd, backlog) < 0)
     {
-        tws::close_fd(fd);
+        ::close(fd);
         throw std::runtime_error("listen failed");
     }
 

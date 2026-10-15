@@ -13,9 +13,14 @@
 #ifndef TWS_COMMON_CPP_COMPAT_H
 #define TWS_COMMON_CPP_COMPAT_H
 
+#include <bit>            // std::byteswap（C++23）
+#include <cstdint>        // std::uint32_t
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>        // std::to_underlying（C++23）
+// 注意：<bit>/<cstdint>/<utility> 必须显式包含 —— 门禁 QUAL-001 会把每个头文件当
+// 独立 TU 编译（-fsyntax-only），依赖间接引入会在"头文件自洽"检查上失败（真实踩过）。
 
 #if defined(__has_include)
 #  if __has_include(<version>)

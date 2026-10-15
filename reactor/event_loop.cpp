@@ -9,7 +9,6 @@
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
 #include <unistd.h>
-#include "platform/io_compat.h"  // epoll_fd_/wakeup_fd_ 统一由兼容层关闭与读写
 #include <sstream>
 #include <thread>
 #include <cerrno>
@@ -33,8 +32,8 @@ EventLoop::EventLoop()
 }
 
 EventLoop::~EventLoop() {
-    tws::close_fd(epoll_fd_);
-    tws::close_fd(wakeup_fd_);
+    close(epoll_fd_);
+    close(wakeup_fd_);
 }
 
 void EventLoop::Loop() {
@@ -148,7 +147,7 @@ void EventLoop::RemoveEvent(int fd) {
 
 void EventLoop::Wakeup() {
     uint64_t one = 1;
-    ssize_t n = tws::write_fd(wakeup_fd_, &one, sizeof(one));
+    ssize_t n = write(wakeup_fd_, &one, sizeof(one));
     if (n != sizeof(one)) {
         LOG_ERROR("EventLoop::Wakeup writes %ld bytes instead of 8", n);
     }
@@ -156,7 +155,7 @@ void EventLoop::Wakeup() {
 
 void EventLoop::HandleReadForWakeup() {
     uint64_t one = 1;
-    ssize_t n = tws::read_fd(wakeup_fd_, &one, sizeof(one));
+    ssize_t n = read(wakeup_fd_, &one, sizeof(one));
     if (n != sizeof(one)) {
         LOG_ERROR("EventLoop::HandleReadForWakeup reads %lu bytes instead of 8", n);
     }

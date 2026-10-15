@@ -158,15 +158,10 @@ target_include_directories(project_configs INTERFACE
 )
 
 if(TWS_PLATFORM STREQUAL "win32")
-    # 兼容头层必须最先被搜索到：源文件里的 <sys/socket.h>/<arpa/inet.h> 等
-    # 在 MinGW 上不存在，由本目录提供等价声明（实现在 src/platform/）。
-    target_include_directories(project_configs BEFORE INTERFACE
-        ${PROJECT_SOURCE_DIR}/include/platform/win32)
+    # Windows 只构建可移植核心：不开 POSIX 兼容头层（架构上不伪装成 Linux）
     target_compile_definitions(project_configs INTERFACE
-        TWS_PLATFORM_WIN32=1
         WIN32_LEAN_AND_MEAN=1
-        NOMINMAX=1
-        _WIN32_WINNT=0x0601)
+        NOMINMAX=1)
 endif()
 
 target_compile_options(project_configs INTERFACE
@@ -182,34 +177,44 @@ if(TWS_ENABLE_CLANG_TIDY)
     endif()
 endif()
 
-# --- 5. 核心源文件 -----------------------------------------------------------
-set(CORE_SOURCES
-    src/server.cpp
-    src/connection.cpp
-    src/http_request.cpp
-    src/http_parser.cpp
-    src/thread_pool.cpp
-    src/timer_manager.cpp
+# --- 5. 核心源文件（按可移植性二分） -----------------------------------------
+# 为什么要二分（用户 2026-10-15 决策 B）：
+#   本项目的技术身份是 Linux 专有机制 —— epoll、边缘触发 ET、SO_REUSEPORT、
+#   eventfd、mmap 零拷贝。在 Windows 上强行移植只能退化成 WSAPoll(O(n)) 的
+#   Proactor/轮询替代品，既违反"禁止从 Reactor 切到 Proactor"的架构约束，
+#   又会让人误以为 Windows 上具备 epoll 级并发能力。
+#   因此：Windows 只构建/测试【平台无关核心】，网络层显式标记为 Linux only。
+set(PORTABLE_SOURCES
     src/error.cpp
     src/error/error.cpp
     src/timer/timer_wheel.cpp
-    src/static_resource_manager.cpp
-    src/http_response.cpp
+    src/timer_manager.cpp
+    src/thread_pool.cpp
     src/Logger.cpp
     src/async_Logger.cpp
     src/config/server_config.cpp
     src/server_metrics.cpp
     src/logging/structured_logger.cpp
     src/memory_pool.cpp
+    src/http_request.cpp
+    src/http_parser.cpp
+    src/http_response.cpp
+    src/request_validator.cpp
+    src/http/keep_alive_manager.cpp
+    src/http/conditional_request_handler.cpp
+)
+
+# 依赖 POSIX/epoll 的源文件：仅在非 Windows 平台构建
+set(NETWORK_SOURCES
+    src/server.cpp
+    src/connection.cpp
+    src/static_resource_manager.cpp
     reactor/event_loop.cpp
     reactor/event_loop_thread.cpp
     reactor/event_loop_thread_pool.cpp
     reactor/socket_utils.cpp
     reactor/multi_listen_socket.cpp
     reactor/batch_io_handler.cpp
-    src/request_validator.cpp
-    src/http/keep_alive_manager.cpp
-    src/http/conditional_request_handler.cpp
     src/http2/h2_frame_parser.cpp
     src/http2/h2_connection.cpp
     src/http2/h2_stream.cpp
@@ -219,7 +224,7 @@ set(CORE_SOURCES
 )
 
 set(MISSING_CORE "")
-foreach(src ${CORE_SOURCES})
+foreach(src ${PORTABLE_SOURCES} ${NETWORK_SOURCES})
     if(NOT EXISTS ${PROJECT_SOURCE_DIR}/${src})
         list(APPEND MISSING_CORE ${src})
     endif()
@@ -227,19 +232,17 @@ endforeach()
 if(MISSING_CORE)
     message(FATAL_ERROR "核心源文件缺失: ${MISSING_CORE}")
 endif()
-list(LENGTH CORE_SOURCES CORE_COUNT)
-message(STATUS "核心源文件: ${CORE_COUNT} 个（完整性已校验）")
-
-add_library(webserver_core STATIC ${CORE_SOURCES})
-target_link_libraries(webserver_core PUBLIC Threads::Threads project_configs nlohmann_json::nlohmann_json)
+list(LENGTH PORTABLE_SOURCES PORTABLE_COUNT)
+list(LENGTH NETWORK_SOURCES NETWORK_COUNT)
 
 if(TWS_PLATFORM STREQUAL "win32")
-    target_sources(webserver_core PRIVATE
-        src/platform/win32_backend.cpp
-        src/platform/win32_filemap.cpp
-        src/platform/win32_compat.cpp)
-    target_link_libraries(webserver_core PUBLIC ws2_32)
+    message(STATUS "源文件: 可移植 ${PORTABLE_COUNT} 个（Windows 不构建网络层 ${NETWORK_COUNT} 个：依赖 epoll/ET/SO_REUSEPORT）")
+    add_library(webserver_core STATIC ${PORTABLE_SOURCES})
+else()
+    message(STATUS "源文件: 可移植 ${PORTABLE_COUNT} 个 + 网络层 ${NETWORK_COUNT} 个（完整性已校验）")
+    add_library(webserver_core STATIC ${PORTABLE_SOURCES} ${NETWORK_SOURCES})
 endif()
+target_link_libraries(webserver_core PUBLIC Threads::Threads project_configs nlohmann_json::nlohmann_json)
 
 # --- 6. 运行时目录（不依赖 bash） --------------------------------------------
 file(MAKE_DIRECTORY ${PROJECT_SOURCE_DIR}/public
@@ -254,22 +257,30 @@ add_custom_target(create_runtime_dirs ALL
     COMMENT "运行时目录就绪"
     VERBATIM)
 
-# --- 7. 主程序 ---------------------------------------------------------------
-if(EXISTS ${PROJECT_SOURCE_DIR}/src/main.cpp)
+# --- 7. 主程序（网络层，仅 POSIX） -------------------------------------------
+if(TWS_PLATFORM STREQUAL "win32")
+    message(STATUS "跳过 server 目标：Windows 不构建网络层（详见 SPEC.md 第 2 节平台策略）")
+elseif(EXISTS ${PROJECT_SOURCE_DIR}/src/main.cpp)
     add_executable(server src/main.cpp)
     target_link_libraries(server PRIVATE webserver_core project_configs)
 else()
     message(FATAL_ERROR "缺少主程序入口 src/main.cpp")
 endif()
 
-# --- 8. 测试 -----------------------------------------------------------------
-# 标签语义：
-#   smoke     —— 快速冒烟（PR 必跑）
-#   portable  —— 不依赖 socket，多平台可运行（Windows 上必须能跑）
-#   socket    —— 依赖 socket/网络；Windows 上的运行验收由 WSL2 承担
-#   gtest     —— 依赖 GTest
-set(TEST_TARGETS
+# 可移植测试：Windows 与 Linux 都必须通过（Windows 的达标口径就是这一组）
+set(TESTS_PORTABLE_TARGETS
     test_timer
+    test_log
+    test_bounded_logger
+    test_structured_log
+    test_request_validator
+    test_keep_alive
+    test_conditional_request
+    test_memory_pool
+    test_cpp_compat)
+
+# 网络/集成测试：依赖 epoll + socket，仅 POSIX 构建；Windows 上的运行验收在 WSL2
+set(TESTS_LINUX_TARGETS
     test_lifecycle
     test_single_connection
     test_multi_connection
@@ -279,17 +290,9 @@ set(TEST_TARGETS
     test_main
     test_multithread_reactor
     test_basic
-    test_log
-    test_bounded_logger
-    test_structured_log
-    test_request_validator
-    test_keep_alive
-    test_conditional_request
-    test_memory_pool
     test_multi_listen_socket
     test_batch_io_handler
-    test_so_reuseport_integration
-)
+    test_so_reuseport_integration)
 
 set(TESTS_NEEDING_GTEST
     test_multi_listen_socket
@@ -303,18 +306,14 @@ set(TESTS_SMOKE
     test_log
     test_bounded_logger)
 
-set(TESTS_PORTABLE
-    test_timer
-    test_log
-    test_bounded_logger
-    test_structured_log
-    test_request_validator
-    test_conditional_request
-    test_memory_pool
-    test_batch_io_handler)
-
 set(ALL_TEST_TARGETS "")
 if(BUILD_TESTING)
+    set(TEST_TARGETS ${TESTS_PORTABLE_TARGETS})
+    set(TESTS_PORTABLE ${TESTS_PORTABLE_TARGETS})
+    if(NOT TWS_PLATFORM STREQUAL "win32")
+        list(APPEND TEST_TARGETS ${TESTS_LINUX_TARGETS})
+    endif()
+
     foreach(test_name ${TEST_TARGETS})
         set(TEST_FILE ${PROJECT_SOURCE_DIR}/test/${test_name}.cpp)
         if(NOT EXISTS ${TEST_FILE})
@@ -355,7 +354,12 @@ if(BUILD_TESTING)
     message(STATUS "测试目标: ${TEST_COUNT} 个（portable=${TESTS_PORTABLE}）")
 endif()
 
-# --- 9. 基准测试框架 ---------------------------------------------------------
+# --- 9. 基准测试框架（网络压测，仅 POSIX） -----------------------------------
+if(BUILD_BENCHMARKS AND TWS_PLATFORM STREQUAL "win32")
+    message(STATUS "跳过基准测试框架：依赖 socket 压测与 /proc 采样，属 Linux 专有")
+    set(BUILD_BENCHMARKS OFF)
+endif()
+
 if(BUILD_BENCHMARKS)
     set(BENCHMARK_SOURCES
         benchmark/src/benchmark_base.cpp
