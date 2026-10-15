@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -218,14 +219,36 @@ def is_expired(w: Waiver, spec: Spec | None) -> bool:
     return exp is not None and datetime.now(timezone.utc) >= exp
 
 
-def _commit_matches(waiver_commit: str, commit: str) -> bool:
+def _commit_matches(waiver_commit: str, commit: str, root: str | Path | None = None) -> bool:
+    """waiver 绑定的提交与当前提交是否相容。
+
+    语义（实测驱动）：waiver 是"对某次改动集"的批准，而不是"对某个 SHA 字符串"的批准。
+    原实现只做字符串相等，导致**审批通过后只要再提交一次，批准就静默失效** ——
+    实测：作者=agent/批准人=xzgjj 的 waiver 在 HEAD 前进一个提交后 CI-001 重新变红。
+    现在：
+      * 空 waiver.commit = 不绑定具体提交（仍然生效）；
+      * 前缀相等 = 同一提交；
+      * waiver.commit 是当前提交的**祖先** = 批准仍然适用（后续提交未回退该批准）；
+      * 无法判定（非仓库/浅克隆）= 不生效（fail closed）。
+    """
     a = (waiver_commit or "").strip().lower()
     b = (commit or "").strip().lower()
     if not a:
         return True                      # 空 = 不绑定具体提交
     if not b:
         return False                     # 无法确定当前提交 -> 不生效（fail closed）
-    return a == b or a.startswith(b) or b.startswith(a)
+    if a == b or a.startswith(b) or b.startswith(a):
+        return True
+    if root is None:
+        return False
+    try:
+        proc = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", a, b],
+            cwd=str(root), capture_output=True, text=True, timeout=15,
+        )
+        return proc.returncode == 0      # 0 = a 是 b 的祖先
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def _scope_hits(scope_files: Iterable[str], changed: Iterable[str]) -> bool:
@@ -264,7 +287,7 @@ def active_waivers(
             continue                            # 双保险：申请人与批准人同一人
         if is_expired(w, spec):
             continue
-        if not _commit_matches(w.commit, commit):
+        if not _commit_matches(w.commit, commit, root):
             continue
         if not _scope_hits(w.scope_files, changed):
             continue

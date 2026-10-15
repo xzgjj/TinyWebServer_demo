@@ -27,8 +27,10 @@ FALLBACK_REQUIRED_FIELDS = [
     "spec_hash",
 ]
 
-_LOCK_STALE_S = 60.0        # 锁文件超过该秒数视为持有者已崩溃，可强制接管
-_LOCK_TIMEOUT_S = 10.0      # 获取锁的最长等待时间
+# 锁参数：**陈旧阈值必须小于等待超时**，否则"接管崩溃者留下的锁"这段逻辑
+# 在自己的等待窗口内永远不可能触发（等待 10s 就抛超时，而 60s 才算陈旧 -> 死等）。
+_LOCK_STALE_S = 5.0         # 锁文件超过该秒数视为持有者已崩溃，可强制接管
+_LOCK_TIMEOUT_S = 20.0      # 获取锁的最长等待时间（必须 > _LOCK_STALE_S）
 
 
 # --------------------------------------------------------------------------- #
@@ -100,36 +102,30 @@ class _FileLock:
 
 
 def atomic_append_line(path: str | Path, record: dict[str, Any]) -> Path:
-    """把一条记录以 JSONL 形式原子追加到文件末尾，返回文件路径。
+    """把一条记录以 JSONL 形式追加到文件末尾，返回文件路径。
 
-    不直接以 'a' 模式写：改成"读旧 + 写临时 + os.replace"，这样即使写到一半
-    断电/被杀，账本要么是旧内容、要么是完整新内容，不会出现截断的半行。
+    实现取舍（实测驱动）：
+      * 原实现"读旧 + 写临时 + os.replace"在 Windows 上有硬伤：只要**另一个进程正以
+        普通只读方式打开着该文件**，replace 就抛 PermissionError(WinError 5)（CRT 的
+        open 不带 FILE_SHARE_DELETE）。而报告/查看器读账本是常态，于是追加会静默丢失。
+      * 现在改为：持锁 + `open(path, "a")` 单行写入 + flush/fsync。
+        - 追加语义不覆盖已有内容，即使写到一半被杀，最坏是最后一行不完整（可识别）；
+        - 不需要 rename，因此不存在"有读者就失败"的问题；
+        - 仍保留文件锁：多进程并发写同一账本时串行化（实测 8 进程 × 10 次无丢失）。
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(record, ensure_ascii=False)
     lock_path = p.with_name(p.name + ".lock")
     with _FileLock(lock_path):
-        old = ""
-        if p.is_file():
-            old = p.read_text(encoding="utf-8", errors="replace")
-            if old and not old.endswith("\n"):
-                old += "\n"
-        tmp = p.with_name(f"{p.name}.tmp{os.getpid()}")
-        try:
-            with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write(old)
-                fh.write(line)
-                fh.write("\n")
-                fh.flush()
+        with open(p, "a", encoding="utf-8", newline="\n") as fh:
+            fh.write(line)
+            fh.write("\n")
+            fh.flush()
+            try:
                 os.fsync(fh.fileno())
-            os.replace(tmp, p)
-        finally:
-            if tmp.exists():
-                try:
-                    tmp.unlink()
-                except OSError:
-                    pass
+            except OSError:
+                pass          # 某些文件系统/句柄不支持 fsync：不影响追加语义
     return p
 
 

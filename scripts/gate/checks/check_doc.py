@@ -106,6 +106,8 @@ def doc_budget(ctx: Context, rule: Rule) -> list[Finding]:
             )
             continue
         count = non_whitespace_chars(text)
+        # 发布到 ctx.cache：--update-baseline 用它重算 gate/baseline.json 的 doc_chars 段
+        ctx.cache.setdefault("baseline_doc_chars", {})[name] = count
         base_val = _as_int(recorded.get(name), None)
         if base_val is None:
             findings.append(

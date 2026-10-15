@@ -12,10 +12,46 @@
     "clang++": 706
   },
   "complexity": {
+    "_note": "2026-10-15 覆盖度修复后重新标定：QUAL-002 原先只看 depth==0 的全局函数（33 个 .cpp 里 14 个识别出 0 个函数）。修正解析器后仓库共识别 321 个函数，新暴露 7 个存量超限函数，一并冻结。棘轮语义不变：只允许下降。",
+    "src/config/server_config.cpp:LoadFromJsonObject": {
+      "cyclomatic": 64,
+      "lines": 113,
+      "nesting": 4
+    },
     "src/main.cpp:main": {
       "cyclomatic": 27,
       "lines": 178,
       "nesting": 6
+    },
+    "src/async_Logger.cpp:Append": {
+      "cyclomatic": 19,
+      "lines": 85,
+      "nesting": 4
+    },
+    "src/async_Logger.cpp:ThreadFunc": {
+      "cyclomatic": 17,
+      "lines": 93,
+      "nesting": 8
+    },
+    "src/http2/hpack_decoder.cpp:DecodeHeaderField": {
+      "cyclomatic": 16,
+      "lines": 94,
+      "nesting": 3
+    },
+    "src/async_Logger.cpp:WriteBuffersToFile": {
+      "cyclomatic": 9,
+      "lines": 34,
+      "nesting": 5
+    },
+    "src/http_response.cpp:Init": {
+      "cyclomatic": 7,
+      "lines": 30,
+      "nesting": 5
+    },
+    "src/timer/timer_wheel.cpp:ProcessSlot": {
+      "cyclomatic": 6,
+      "lines": 51,
+      "nesting": 5
     },
     "test/test_main.cpp:IntegrationTest_FullFlow": {
       "cyclomatic": 27,

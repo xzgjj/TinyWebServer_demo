@@ -27,6 +27,7 @@ import importlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -518,6 +519,40 @@ def verify_spec_drift() -> list[str]:
         real.check_registry_consistency(REGISTRY)
     except Exception as exc:  # noqa: BLE001
         problems.append(f"check_registry_consistency 失败: {exc}")
+    problems.extend(verify_pattern_reachability(real))
+    return problems
+
+
+def verify_pattern_reachability(real: Spec) -> list[str]:
+    """受保护/禁止模式必须至少能命中仓库里的一个受版本控制的文件。
+
+    为什么必须查：模式写错（例如尾随 `/`、拼错目录名）不会报错，只会**永远不触发** ——
+    实测 `protected_paths` 里的 `scripts/gate/`、`.github/workflows/` 就是死规则，
+    把引擎改成恒 PASS、把 CI 文件删掉都不会被拦。这类"看起来有规则、实际没有"的
+    沉默失效，比规则报错危险得多。
+    """
+    from gate.context import glob_match
+
+    repo = Path(__file__).resolve().parent.parent.parent
+    try:
+        proc = subprocess.run(["git", "ls-files"], cwd=str(repo),
+                              capture_output=True, text=True, timeout=30)
+        tracked = [ln.strip().replace("\\", "/") for ln in proc.stdout.splitlines() if ln.strip()]
+    except (OSError, subprocess.SubprocessError):
+        return ["无法列出仓库文件（git ls-files 失败），跳过模式可达性检查"]
+
+    problems: list[str] = []
+    patterns: list[tuple[str, str]] = [(p, "protected_paths") for p in real.protected_paths]
+    for rid, rule in real.rules.items():
+        for key in ("default_deny", "deny"):
+            for pat in (rule.get(key) or []):
+                patterns.append((str(pat), f"{rid}.{key}"))
+    for pat, where in patterns:
+        if any(glob_match(f, pat) for f in tracked):
+            continue
+        problems.append(
+            f"{where} 的模式 {pat!r} 命中不到任何受版本控制的文件（死规则：永远不触发）"
+        )
     return problems
 
 

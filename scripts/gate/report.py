@@ -325,6 +325,24 @@ def render_markdown(report: GateReport, spec: Any = None) -> str:
             )
         L.append("")
         L.append("> 例外是【人的判断】，不代表问题消失；到期后本条会重新变成阻断项。")
+        # 逐条列出"这条例外实际豁免了哪些 finding"。
+        # 为什么必须列：只看上面那张表，读者无法判断"被放过的到底是什么"——
+        # 实测过一条 scope=[src/a.cpp] 的例外面上看没问题，实际顺带豁免了 LICENSE 的越界。
+        L.append("")
+        L.append("**被本次例外豁免的具体条目**（复核时请看这里，而不是只看上表）")
+        L.append("")
+        waived_rows: list[str] = []
+        for rule in report.results:
+            for f in rule.findings:
+                if f.status is Status.WAIVED:
+                    waived_rows.append(
+                        f"- **{rule.rule_id}** {_code(f.subject)}：{_esc(f.message)} "
+                        f"（observed={_esc(f.observed)} / threshold={_esc(f.threshold)}）"
+                    )
+        if waived_rows:
+            L.extend(waived_rows)
+        else:
+            L.append("_（本轮的例外没有命中任何 finding，可能范围写错了）_")
     else:
         L.append("_（无）_")
     L.append("")

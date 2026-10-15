@@ -12,6 +12,7 @@ import inspect
 import json
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -24,7 +25,7 @@ if __package__ in (None, ""):
     __package__ = "scripts.gate"
 
 from scripts.gate import ledger, report as report_mod, runner, waivers
-from scripts.gate.context import collect_git
+from scripts.gate.context import collect_git, match_any
 from scripts.gate.model import STATUS_ICON, ExitCode, Status
 from scripts.gate.spec import Spec, SpecError
 from scripts.gate.task import TaskContract, TaskError, now_iso
@@ -106,6 +107,47 @@ def _print(text: str = "") -> None:
 # --------------------------------------------------------------------------- #
 # 子命令：run
 # --------------------------------------------------------------------------- #
+def _update_baseline(root: Path, spec: Spec, rep) -> None:
+    """用本次运行的实测值重算 gate/baseline.json 的棘轮基线。
+
+    为什么需要它：DOC-001/QUAL-001/QUAL-002/QUAL-003 的棘轮都依赖 baseline.json，
+    没有受支持的重建入口，基线缺失时规则只能降级为 WARN（实测过），棘轮等于没有。
+    语义保持"棘轮"：只覆盖本次真正测到的段；未测到的段原样保留。
+    """
+    cand = (rep.environment or {}).get("baseline_candidates") or {}
+    path = root / str(spec.meta.get("baseline_path", "gate/baseline.json"))
+    data: dict = {}
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            _print(f"⚠ 现有基线不是合法 JSON，将被覆盖: {path}")
+    changed: list[str] = []
+    if cand.get("doc_chars"):
+        data["doc_chars"] = dict(sorted(cand["doc_chars"].items()))
+        changed.append(f"doc_chars({len(cand['doc_chars'])})")
+    if cand.get("warnings"):
+        data["warnings"] = {**{k: v for k, v in (data.get("warnings") or {}).items()
+                              if str(k).startswith("_")},
+                            **dict(sorted(cand["warnings"].items()))}
+        changed.append(f"warnings({len(cand['warnings'])})")
+    if cand.get("complexity"):
+        data["complexity"] = dict(sorted(cand["complexity"].items()))
+        changed.append(f"complexity({len(cand['complexity'])})")
+    if isinstance(cand.get("cppcheck"), int):
+        data["cppcheck"] = cand["cppcheck"]
+        changed.append(f"cppcheck({cand['cppcheck']})")
+    if not changed:
+        _print("⚠ --update-baseline：本次没有采集到任何可更新的段（可能用了 --skip-heavy）")
+        return
+    data["generated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    data["generator"] = "gate run --update-baseline（实测值重算）"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _print(f"✓ 已更新棘轮基线 {path}：{', '.join(changed)}")
+    _print("  注意：baseline.json 属受保护路径，收紧/放宽都需 CI-001 的非作者审批。")
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     root = resolve_root(args)
     spec_path = resolve_spec(args, root)
@@ -129,6 +171,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         "write_reports": True,
     }
     rep = runner.run_gate(root, spec_path, task_id, options)
+    if getattr(args, "update_baseline", False):
+        _update_baseline(root, spec, rep)
     if args.as_json:
         _print(rep.to_json())
     else:
@@ -322,7 +366,16 @@ def cmd_report(args: argparse.Namespace) -> int:
 def cmd_exception_request(args: argparse.Namespace) -> int:
     root = resolve_root(args)
     spec = load_spec(root, args)
-    requester = args.by or collect_git(root).author_name or os.environ.get("USERNAME") or "unknown"
+    facts = collect_git(root)
+    requester = args.by or facts.author_name or os.environ.get("USERNAME") or "unknown"
+
+    scope = _split_list(args.scope)
+    if not scope:
+        # 默认取"当前改动里命中受保护路径的文件"。
+        # 为什么必须默认：rule_guard 要求 waiver 的 scope 命中受保护文件才认账，
+        # 而不带 scope 的申请即使被批准也永远不生效（实测：先 block 再说"没有任何 waiver 覆盖"）。
+        scope = [p for p in facts.changed if match_any(p, spec.protected_paths)]
+
     w = waivers.request(
         root,
         rule=args.rule.upper(),
@@ -331,11 +384,20 @@ def cmd_exception_request(args: argparse.Namespace) -> int:
         requested_by=requester,
         ttl_days=args.ttl_days,
         spec=spec,
-        scope_files=_split_list(args.scope),
+        scope_files=scope,
     )
     _print(f"{STATUS_ICON[Status.WAIVED]} 已申请例外：{waivers.describe(w)}")
     _print(f"  理由：{w.reason}")
-    _print(f"  批准命令（批准人必须 ≠ 申请人）："
+    _print(f"  范围：{scope if scope else '（未命中任何受保护文件）'}")
+    if not scope:
+        _print("  ⚠ 本次改动没有命中受保护路径：这条例外不会生效（无需申请，或需显式 --scope）")
+    # 提前把"本地批不了"的情况说清楚，避免用户照抄命令后卡住（实测过这个坑）
+    if requester in spec.rule_approvers and len(spec.rule_approvers) == 1:
+        _print(f"  ⚠ 申请人 {requester} 同时是唯一审批人（rule_approvers={spec.rule_approvers}）："
+               "本地无法自行批准（规则要求批准人 ≠ 申请人、且 ≠ 变更作者）")
+        _print("    可选：① 用另一个审批人身份；② 由 GitHub 分支保护 + CODEOWNERS 在 PR 上批准；"
+               "③ 让代理以独立身份提交（作者=agent），你再用本身份批准")
+    _print(f"  批准命令（批准人必须 ≠ 申请人，且 ≠ 变更作者）："
            f"python scripts/gate/cli.py exception approve --id {w.waiver_id} --by <approver>")
     _print("  注意：未批准前本例外不生效，规则仍按原样阻断。")
     return ExitCode.PASS
@@ -466,6 +528,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="<命令>")
 
     p_run = sub.add_parser("run", parents=[common], help="跑一次门禁并落盘报告/账本")
+    p_run.add_argument("--update-baseline", action="store_true",
+                       help="用本次实测值重算 gate/baseline.json 的棘轮基线（受保护文件，改动需 CI-001 审批）")
     p_run.add_argument("--task", default="auto",
                        help="任务契约 ID；auto（默认）= 取 gate/tasks/ 里最近更新的一份")
     p_run.add_argument("--base", default=None, metavar="A..B", help="CI 模式：只判定 A..B 区间")

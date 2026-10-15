@@ -138,6 +138,8 @@ def lint(ctx: Context, rule: Rule) -> list[Finding]:
         warns = len(_WARN_RE.findall(out))
         total_errors += errors
         total_warnings += warns
+        # 发布候选基线：--update-baseline 用它重算 baseline.json 的 warnings 段
+        ctx.cache.setdefault("baseline_warnings", {})[name] = warns
 
         base_val = None
         if baseline_present:
@@ -480,6 +482,10 @@ def complexity(ctx: Context, rule: Rule) -> list[Finding]:
     frozen: list[str] = []
     for rel, name, line, cyc, fn_lines, nesting in hits:
         key = f"{rel}:{name}"
+        # 发布候选基线：--update-baseline 用它重算 baseline.json 的 complexity 段
+        ctx.cache.setdefault("baseline_complexity", {})[key] = {
+            "cyclomatic": cyc, "lines": fn_lines, "nesting": nesting,
+        }
         prev = complexity_baseline.get(key)
         if prev is not None and _not_worse(prev, cyc, fn_lines, nesting):
             frozen.append(f"{key} {cyc}/{fn_lines}/{nesting}")
@@ -578,27 +584,29 @@ def _parse_functions(stripped: str, rel: str) -> tuple[list[_Func], str | None]:
     depth = 0
     pending: list[tuple[str, int]] = []         # 当前层的签名 token（成对括号已折叠为 ')'）
     stack: list[dict | None] = []               # 每层大括号对应的"函数上下文"，非函数为 None
+    saved: list[tuple[list[tuple[str, int]], bool]] = []   # 进入 `{` 前保存本层签名缓冲
     ctrl_parens = False                         # 本层 `{` 前是否跟在控制关键字后面
     paren_depth = 0
     for kind, val, ln in tokens:
         if kind == "op" and val == "(":
-            if depth == 0:
-                pending.append((val, ln))
-                paren_depth += 1
+            # 关键修复：签名识别不能只在 depth==0 做 —— 否则 namespace/class/struct 里的
+            # 函数全部看不见（实测 33 个 .cpp 中 14 个识别出 0 个函数）。
+            # 每个大括号层维护自己的签名缓冲，天然隔离"类体/命名空间体/函数体"。
+            pending.append((val, ln))
+            paren_depth += 1
             continue
         if kind == "op" and val == ")":
-            if depth == 0:
-                paren_depth -= 1
-                while pending and pending[-1][0] not in {"(", ")"}:
-                    pending.pop()
-                if pending and pending[-1][0] == "(":
-                    pending.pop()                # 参数列表整体折叠掉：名字只看 '(' 之前
-                pending.append((")", ln))
-                paren_depth = max(0, paren_depth)
+            paren_depth -= 1
+            while pending and pending[-1][0] not in {"(", ")"}:
+                pending.pop()
+            if pending and pending[-1][0] == "(":
+                pending.pop()                    # 参数列表整体折叠掉：名字只看 '(' 之前
+            pending.append((")", ln))
+            paren_depth = max(0, paren_depth)
             continue
         if kind == "op" and val == "{":
             name = None
-            if depth == 0 and not ctrl_parens and paren_depth == 0 and _looks_like_definition(pending):
+            if not ctrl_parens and paren_depth == 0 and _looks_like_definition(pending):
                 name = _signature_name(pending)
             env = (
                 {"name": name, "line": ln, "cyc": 1, "depth": 1, "max_depth": 1}
@@ -609,6 +617,7 @@ def _parse_functions(stripped: str, rel: str) -> tuple[list[_Func], str | None]:
             if parent is not None:
                 parent["depth"] += 1
                 parent["max_depth"] = max(parent["max_depth"], parent["depth"])
+            saved.append((pending, ctrl_parens))  # 保存外层签名缓冲，进入新层
             stack.append(env)
             depth += 1
             pending = []
@@ -630,19 +639,19 @@ def _parse_functions(stripped: str, rel: str) -> tuple[list[_Func], str | None]:
             parent = _nearest_env(stack)
             if parent is not None:
                 parent["depth"] = max(1, parent["depth"] - 1)
-            pending = []
-            ctrl_parens = False
+            if saved:
+                pending, ctrl_parens = saved.pop()
+            else:
+                pending, ctrl_parens = [], False
             continue
-        if kind == "op" and val == ";" and depth == 0:
+        if kind == "op" and val == ";":
             pending = []                        # 声明结束，清空签名缓存
             ctrl_parens = False
             continue
         if kind == "id":
-            if depth == 0:
-                pending.append((val, ln))
-                if val in _CTRL_WORDS:
-                    ctrl_parens = True
-                continue
+            pending.append((val, ln))
+            if val in _CTRL_WORDS:
+                ctrl_parens = True
             env = _nearest_env(stack)
             if env is not None and val in {"if", "for", "while", "case", "catch"}:
                 env["cyc"] += 1
@@ -857,6 +866,7 @@ def problems_panel(ctx: Context, rule: Rule) -> list[Finding]:
         write_text_atomic(abs_path, f"$ {' '.join(cmd)}\n# exit={proc.returncode}\n{out}")
     except OSError:
         evidence_rel = None
+    ctx.cache["baseline_cppcheck"] = errors     # 候选基线：--update-baseline 用
 
     # 存量棘轮（与 QUAL-002 同一原则）：仓库里已有的 cppcheck 问题冻结在基线数量上，
     # 只允许下降不允许增加；否则"接手任何遗留文件都会让门禁变红"，规则必然被绕过。

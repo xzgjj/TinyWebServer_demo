@@ -74,12 +74,15 @@ def scope(ctx: Context, rule: Rule) -> list[Finding]:
 
     deny = list(task.deny) if task else []
     allow = list(task.allow) if task else []
-    # 判定对象是 git 报出的全部改动（含被删除的文件与被展开的未跟踪文件），
-    # 只剔除 exclude_globs（构建产物/第三方/夹具）。不能用 affected()：
-    # 它过滤掉"已不存在"的路径，会把"删除 public/index.html"整个漏掉。
+    # 两类判定对象刻意不同：
+    #   * allow（"你被允许改什么"）只看参与判定的文件（剔除 build/**、exclude_globs 等）；
+    #   * deny/default_deny（"什么绝对不能碰"）必须看**全部**改动 —— 否则
+    #     default_deny 里的 third_party/** 会被 exclude_globs 先剔除，永远命中不了，
+    #     等于这条禁止形同虚设（实测：改 third_party/lib.hpp 判 pass）。
     targets = [p for p in changed if not ctx.excluded(p)]
+    deny_targets = list(changed)
 
-    if not targets:
+    if not targets and not deny_targets:
         findings.append(
             Finding(
                 rule=rule.id, status=Status.PASS, subject="(改动文件)",
@@ -91,7 +94,7 @@ def scope(ctx: Context, rule: Rule) -> list[Finding]:
 
     denied: list[tuple[str, str]] = []      # (path, 命中的模式)
     outside: list[str] = []
-    for path in targets:
+    for path in deny_targets:
         hit = _first_match(path, deny)
         if hit is not None:
             denied.append((path, f"task.deny:{hit}"))
@@ -99,7 +102,7 @@ def scope(ctx: Context, rule: Rule) -> list[Finding]:
         hit = _first_match(path, default_deny)
         if hit is not None:
             denied.append((path, f"default_deny:{hit}"))
-            continue
+    for path in targets:
         if allow and not match_any(path, allow):
             outside.append(path)
 
@@ -129,6 +132,7 @@ def scope(ctx: Context, rule: Rule) -> list[Finding]:
                 message=(
                     f"{len(targets)} 个改动文件全部在范围内"
                     + (f"（{len(allow)} 条 allow 模式）" if allow else "（allow 未限定，仅受 deny 约束）")
+                    + (f"；禁止清单按全部 {len(deny_targets)} 个改动核对" if deny_targets != targets else "")
                 ),
                 observed=len(targets), threshold=len(targets), level="info",
             )

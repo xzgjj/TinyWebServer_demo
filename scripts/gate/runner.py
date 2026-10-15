@@ -445,6 +445,15 @@ def run_gate(
     if active and not applied:
         env["notes"].append(f"有 {len(active)} 条生效例外，但本次没有任何规则命中它们")
 
+    # 棘轮候选值：判定器把"本次实测值"发布到 ctx.cache，这里统一导出到报告，
+    # 供 `gate run --update-baseline` 重算 gate/baseline.json（棘轮唯一受支持的重建入口）。
+    env["baseline_candidates"] = {
+        "doc_chars": ctx.cache.get("baseline_doc_chars") or {},
+        "warnings": ctx.cache.get("baseline_warnings") or {},
+        "complexity": ctx.cache.get("baseline_complexity") or {},
+        "cppcheck": ctx.cache.get("baseline_cppcheck"),
+    }
+
     verdict = aggregate_verdict(results)
     halt: dict[str, Any] | None = None
     if verdict is Status.HALTED:
