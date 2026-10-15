@@ -1,20 +1,35 @@
+# =============================================================================
+# 忽略规则纪律（血泪教训，见 [audit-16]）
+#
+# 无前导斜杠的模式会匹配**任意层级**的同名文件，历史上已经造成两次真实事故：
+#   1) `test_*`   → test/ 下 17 个测试源文件被静默排除，远端仓库几乎没有测试；
+#   2) `CLAUDE.md`/`build/` → gate/fixtures/** 里的夹具文件被静默排除，
+#      本地存在所以 selftest 全绿，CI 全新 clone 后夹具缺失 → 自测失败。
+# 因此：**只忽略仓库根目录产物时一律加前导 `/`**；子目录规则必须写全路径。
+# =============================================================================
 
+# ---- 构建产物（任意层级，构建目录名固定） ----
 build/
+build_*/
 build_temp/
 build_temp_check/
 bin/
 *.o
 *.a
 *.so
+/relcheck/
+/Testing/
 
-# 可执行文件（只忽略仓库根目录下的产物；不加前导斜杠会误伤 test/*.cpp 源码）
+# ---- 仓库根目录的可执行产物（必须锚定，否则会误伤源码/夹具） ----
 /server
 /test_*
 /bench.log
-*.log
 
-# IDE & 编辑器：只忽略个人本地配置，团队共享的编辑器契约要入库
-# （Problems 面板依赖 c_cpp_properties.json/settings.json，任务依赖 tasks.json）
+# ---- 日志（保留 gate/fixtures 里的日志类夹具需显式取反） ----
+*.log
+!gate/fixtures/**/*.log
+
+# ---- IDE & 编辑器：个人本地配置不入库，团队共享的编辑器契约必须入库 ----
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
@@ -24,30 +39,27 @@ bin/
 *.swp
 *.save
 
-# 其他
+# ---- 其他 ----
 .DS_Store
 
-# 项目本地配置和笔记（不推送到远程仓库）
-CLAUDE.md
-notes.txt
-implementation_plan.md
-AGENT_EXECUTION_PROTOCOL.md
-.claude/
+# ---- 项目本地配置和笔记（仅仓库根目录；夹具里的同名文件必须入库） ----
+/CLAUDE.md
+/notes.txt
+/implementation_plan.md
+/AGENT_EXECUTION_PROTOCOL.md
+/.claude/
 
-# 性能基准测试结果（不推送到远程仓库）
+# ---- 性能基准测试结果 ----
 benchmark_results/
 
-# 本地临时文件和日志（不推送到远程仓库）
-local/
-audit_report.md
-diff.md
-server_output.txt
-test_simple.sh
-integration_test.log
-.pulse.json
+# ---- 本地临时文件与运行产物 ----
+/local/
+/audit_report.md
+/diff.md
+/server_output.txt
+/test_simple.sh
+/integration_test.log
+/.pulse.json
 __pycache__/
 *.pyc
 gate/index.db
-CLI.md
-CLI.md
-CMakeLists.txt

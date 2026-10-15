@@ -1,0 +1,7 @@
+[
+  {
+    "directory": "D:\\vsc_project\\TinyWebServer_demo",
+    "command": "g++ -Iinclude -c src/a.cpp",
+    "file": "src/a.cpp"
+  }
+]
