@@ -1,0 +1,22 @@
+# CODEOWNERS —— 规则文件与受保护路径的审批人
+#
+# 为什么需要它：
+#   门禁规则 CI-001 要求"规则文件变更必须由指定人批准，且批准者与开发者分离"。
+#   本地只能留痕（gate/waivers.jsonl），真正的强制在 GitHub 侧：
+#   配合分支保护开启 "Require review from Code Owners"，下面的路径就必须由 @xzgjj 批准。
+#
+# 注意：CODEOWNERS 自身也在门禁的 protected_paths 里（改它同样需要审批）。
+
+# 门禁规则与实现：规则的唯一真相源，绝不允许开发者顺手改绿
+/gate/spec.toml             @xzgjj
+/gate/baseline.json         @xzgjj
+/gate/protected_tests.json  @xzgjj
+/scripts/gate/              @xzgjj
+/CODEOWNERS                 @xzgjj
+
+# 流水线与构建配置：改这里等价于改门禁的适用面
+/.github/workflows/         @xzgjj
+/CMakeLists.txt             @xzgjj
+
+# 受保护测试资产：删改测试必须有人复核（对应规则 TEST-001）
+/test/                      @xzgjj

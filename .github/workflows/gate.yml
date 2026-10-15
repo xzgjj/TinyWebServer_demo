@@ -1,0 +1,164 @@
+name: Gate
+
+# 门禁总入口。三层结构：
+#   1) selfcheck  —— 门禁自己的负向回归（该红时必须红），用 --strict 保证零 SKIP；
+#   2) build      —— 多平台 × 多编译器 × 多标准构建矩阵（Linux 全量测试 / Windows 全量编译 + portable 测试）；
+#   3) gate       —— 在真实仓库上跑门禁判定，并把报告作为产物上传。
+#
+# 重试上限由 gate/spec.toml 的 max_gate_attempts 控制（GOV-001），
+# 另用 concurrency 取消同一分支的旧运行，避免"一次任务无限循环"。
+
+on:
+  push:
+    branches: ["main", "feat/**", "fix/**"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+concurrency:
+  group: gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  selfcheck:
+    name: 门禁自测（负向回归）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装门禁所需工具（缺失会导致 SKIP，--strict 下视为失败）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck g++ clang
+      - name: 规则负向回归（16 条规则：该红时必须红，且不误报）
+        run: python3 scripts/gate/selftest.py --strict
+      - name: 规格与实现一致性（spec 里声明的 check 必须都有实现）
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          from gate.spec import Spec
+          from gate.checks import load_registry
+          spec = Spec.load("gate/spec.toml")
+          spec.check_registry_consistency(load_registry())
+          print(f"spec 与实现一致：{len(spec.rules)} 条规则 / {len(load_registry())} 个判定器")
+          PY
+
+  build-linux:
+    name: Linux ${{ matrix.cxx }} c++${{ matrix.std }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { cxx: g++, std: "17" }
+          - { cxx: g++, std: "23" }
+          - { cxx: clang++, std: "17" }
+          - { cxx: clang++, std: "23" }
+    steps:
+      - uses: actions/checkout@v4
+      - name: 依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ clang libgtest-dev
+      - name: 配置
+        run: >
+          cmake -S . -B build/ci -G Ninja
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DCMAKE_BUILD_TYPE=Debug
+          -DTWS_CXX_STANDARD=${{ matrix.std }}
+          -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=ON
+          -DENABLE_ASAN=OFF
+      - name: 构建
+        run: cmake --build build/ci --parallel
+      - name: 测试（全量）
+        run: ctest --test-dir build/ci --output-on-failure --timeout 120
+
+  build-windows:
+    name: Windows ${{ matrix.cxx }} c++23（全量编译 + portable 测试）
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      # 说明：Windows 侧使用 MSYS2 UCRT64 工具链。第三方 Action（MIT），
+      # 由门禁规则 CI-001 保护其配置变更。
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+      - name: 配置（全量，含基准框架）
+        shell: msys2 {0}
+        run: >
+          cmake -S . -B build/ci -G Ninja
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DCMAKE_BUILD_TYPE=Debug
+          -DTWS_CXX_STANDARD=23
+          -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=ON
+          -DENABLE_ASAN=OFF
+      - name: 构建（全量：核心库 + server + 全部测试目标 + 基准）
+        shell: msys2 {0}
+        run: cmake --build build/ci --parallel
+      - name: 测试（portable 集：Windows 上必须通过）
+        shell: msys2 {0}
+        run: ctest --test-dir build/ci -L portable --output-on-failure --timeout 120
+
+  gate:
+    name: 门禁判定（真实仓库）
+    needs: [selfcheck]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ clang cppcheck libgtest-dev
+      - name: 建立 canonical build/（供 QUAL-001/QUAL-003 使用真实编译参数）
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DTWS_CXX_STANDARD=23 -DBUILD_TESTING=ON -DBUILD_BENCHMARKS=ON -DENABLE_ASAN=OFF
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure --timeout 120
+      - name: 门禁判定
+        id: gate
+        run: |
+          BASE="${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }}"
+          python3 scripts/gate/cli.py run --base "${BASE}..HEAD" --serial
+        continue-on-error: true
+      - name: 生成人类可读摘要
+        if: always()
+        run: python3 scripts/gate/cli.py report --run last > gate_summary.md || true
+      - name: 写入 Step Summary
+        if: always()
+        run: cat gate_summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - name: 上传门禁报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-report
+          path: |
+            local/gate/
+            gate_summary.md
+      - name: 以门禁退出码结束（0 通过 / 1 阻断 / 2 重试超限 / 3 规格错误 / 4 环境错误）
+        if: always()
+        run: |
+          code="${{ steps.gate.outcome }}"
+          echo "门禁结果标记: $code"
+          if [ "$code" != "success" ]; then
+            echo "::error::门禁未通过。例外必须由非作者在 gate/waivers.jsonl 中批准（CI-001）。"
+            exit 1
+          fi
