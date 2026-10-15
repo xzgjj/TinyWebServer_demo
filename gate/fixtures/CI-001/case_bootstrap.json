@@ -1,0 +1,25 @@
+{
+  "rule": "CI-001",
+  "title": "门禁体系首次引入（自举期）-> 降级为告警，不阻断",
+  "expect_status": [
+    "warn"
+  ],
+  "note": "设计意图：门禁的第一版只能由'被它自己保护的改动'引入，此时'非作者批准'在逻辑上无解（唯一审批人就是写作者）——原先这会把门禁自己永久卡死。判据是事实而非声明：规则文件与引擎入口在本次比对基线里都不存在（状态均为 A）。合并进基线分支后，本规则自动恢复为阻断（见 case.json）。",
+  "git": {
+    "changed": [
+      "gate/spec.toml",
+      "scripts/gate/runner.py",
+      "CMakeLists.txt"
+    ],
+    "status_map": {
+      "gate/spec.toml": "A",
+      "scripts/gate/runner.py": "A",
+      "CMakeLists.txt": "M"
+    },
+    "author_name": "AI Agent",
+    "authors": [
+      "AI Agent <agent@local>"
+    ]
+  },
+  "text_files": {}
+}

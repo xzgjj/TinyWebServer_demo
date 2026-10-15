@@ -1,0 +1,15 @@
+{
+  "rule": "TEST-001",
+  "title": "受保护测试被删除 -> 硬阻断（删测试让失败消失）",
+  "expect_status": [
+    "manual"
+  ],
+  "note": "设计意图：内容修改只告警，但**删除受保护测试**必须硬拦 —— 这是'改测试让失败消失'的典型手法，机器可判定。夹具基线里记录了 test/test_basic.cpp，但工作区里没有这个文件（= 被删除）。",
+  "_files_dir": "files_delete",
+  "git": {
+    "changed": [
+      "test/test_basic.cpp"
+    ]
+  },
+  "text_files": {}
+}

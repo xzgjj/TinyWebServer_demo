@@ -30,6 +30,9 @@ class TaskContract:
     max_changed_lines: int | None = None
     min_changed_lines: int | None = None
     max_changed_files: int | None = None
+    budget_rationale: str = ""       # 契约预算的依据（基建类任务与增量任务口径不同）
+    #: 上一次**失败**时的修订指纹；用来区分"在原地重试"与"改了东西再试"
+    last_failed_revision: str = ""
     protected: list[str] = field(default_factory=list)
     audit_tag: str = ""              # 例: audit-04
     base_ref: str = ""               # 空=以工作区相对 HEAD 判定；CI 用 A..B
@@ -77,11 +80,24 @@ class TaskContract:
         return p
 
     # ---- 行为 -------------------------------------------------------------- #
-    def register_attempt(self, verdict: str) -> None:
-        """每次 gate run 记一次尝试；PASS 后归零，避免历史失败永久累计。"""
+    def register_attempt(self, verdict: str, revision: str = "") -> None:
+        """每次 gate run 记一次尝试。
+
+        **计次语义（关键修正）**：只有"**同一修订**连续失败"才累加。
+        原实现是"只要失败就 +1"，于是"代理修好一个问题再跑"也被当成重试，
+        第 4 次就 HALTED —— 而那恰恰是最正常的工作方式（实测把门禁自己卡死）。
+        现在：
+          * 修订指纹变了（改了代码/契约/规格）-> 计数归 1，新问题重新开始；
+          * 修订没变仍然失败 -> 累加，说明真的在原地打转 -> 由 GOV-001 拦下。
+        """
         self.state = "PASSED" if verdict == "pass" else "FAILED"
         if verdict == "pass":
             self.attempts = 0
+            self.last_failed_revision = ""
+            return
+        if revision and revision != self.last_failed_revision:
+            self.attempts = 1
+            self.last_failed_revision = revision
         else:
             self.attempts += 1
 

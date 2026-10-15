@@ -165,6 +165,34 @@ def diff_budget(ctx: Context, rule: Rule) -> list[Finding]:
         min_lines = int(rule.get("min_changed_lines", 0))
         source = "spec 默认（无任务契约）"
 
+    # 契约预算的**硬上限**：契约文件由代理自己写，如果允许它任意调大预算，
+    # "Diff 预算"这条规则就等于不存在（自己给自己发许可证）。
+    # 硬上限写在本规则里（受保护文件），代理要突破必须改规则 -> 触发 CI-001。
+    cap_lines = int(rule.get("max_changed_lines_cap", 0) or 0)
+    cap_files = int(rule.get("max_changed_files_cap", 0) or 0)
+    if cap_lines and max_lines > cap_lines:
+        findings.append(
+            Finding(
+                rule=rule.id, status=Status.BLOCK, subject="(任务契约预算)",
+                message=(
+                    f"契约声明的行数预算 {max_lines} 超过硬上限 {cap_lines}："
+                    "契约不能自行放宽预算，只能收紧"
+                ),
+                observed=max_lines, threshold=cap_lines, level="error",
+                hint=f"把 {source} 的 max_changed_lines 调到 <= {cap_lines}，或申请人工例外。",
+            )
+        )
+        max_lines = cap_lines
+    if cap_files and max_files > cap_files:
+        findings.append(
+            Finding(
+                rule=rule.id, status=Status.BLOCK, subject="(任务契约预算)",
+                message=f"契约声明的文件数预算 {max_files} 超过硬上限 {cap_files}",
+                observed=max_files, threshold=cap_files, level="error",
+            )
+        )
+        max_files = cap_files
+
     lines = ctx.git.lines_changed(ctx.affected())   # 只算参与判定的文件（不含 build/** 等）
     affected = ctx.affected()
     files = len(affected)

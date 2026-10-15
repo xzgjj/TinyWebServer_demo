@@ -136,11 +136,13 @@ require_task_contract = true
 title = "Diff 预算"
 mode  = "block"
 check = "diff_budget"
-desc  = "单次任务改动行数/文件数不得超过任务契约预算（默认 500-800 行区间上限 800）。"
+desc  = "单次任务改动行数/文件数不得超过任务契约预算，且**契约预算本身不得超过 max_changed_lines_cap / max_changed_files_cap**（硬上限，代理不能自己改大预算来通过）。默认 800 行；基建类任务（如门禁体系首次引入）可在硬上限内显式声明更大预算，并在 budget_rationale 里写明依据。"
 [rules.SCOPE-002.params]
 max_changed_lines = 800
 min_changed_lines = 0                         # 下界仅记录，不阻断
 max_changed_files = 24
+max_changed_lines_cap = 25000                 # 硬上限：任何契约都不得超过（含基建任务）
+max_changed_files_cap = 600                   # 硬上限：同上
 count_mode        = "added_plus_deleted"      # 统计口径：git numstat 增+删
 
 
@@ -203,12 +205,13 @@ guard_macro = "TWS_HAS_"
 title = "受保护回归测试"
 mode  = "manual"
 check = "protected_tests"
-desc  = "test/** 是受保护资产：任何修改/删除都需要【非作者】审批；用例数与断言数不得下降。"
+desc  = "test/** 是受保护资产：**删除测试或用例数下降 -> 硬阻断**（机器可判定，典型手法是删测试让失败消失）；**仅内容被修改 -> 告警并提请人工判断**（加强断言与放宽判定都是内容变化，只有人能判断，做成硬阻断会把正常改进逼成走例外）。"
 [rules.TEST-001.params]
 protected_globs = ["test/**", "benchmark/src/**"]
 baseline_file   = "gate/protected_tests.json"
-block_on_hash_change = true
-block_on_case_decrease = true
+block_on_hash_change = false    # 内容修改 = 告警人审（见 desc 的设计理由）
+block_on_case_decrease = true   # 用例数下降 = 硬阻断
+block_on_delete = true          # 删除受保护测试 = 硬阻断（不受 block_on_hash_change 影响）
 
 [rules.TEST-002]
 title = "新增能力必须带测试"

@@ -1,0 +1,17 @@
+{
+  "generated_at": "2026-01-01T00:00:00+0000",
+  "generator": "gate/fixtures/TEST-001/case_delete (手工夹具：断言删测试必须硬拦)",
+  "protected_globs": [
+    "test/**",
+    "benchmark/src/**"
+  ],
+  "file_count": 1,
+  "files": {
+    "test/test_basic.cpp": {
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "test_cases": 2,
+      "assertions": 3,
+      "lines": 8
+    }
+  }
+}

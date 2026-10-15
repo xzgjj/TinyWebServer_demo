@@ -1,0 +1,26 @@
+{
+  "rule": "SCOPE-002",
+  "title": "任务契约自己把预算调到硬上限之上 -> 阻断（不许自己发许可证）",
+  "expect_status": [
+    "block"
+  ],
+  "note": "设计意图：契约文件由代理自己写。若允许它任意调大预算，'Diff 预算'这条规则等于不存在。硬上限 max_changed_lines_cap 写在 gate/spec.toml（受保护文件）里，代理要突破就得改规则，从而触发 CI-001 的人工审批。",
+  "task": {
+    "id": "SELFTEST-BUDGET-CAP",
+    "max_changed_lines": 999999
+  },
+  "git": {
+    "changed": [
+      "src/a.cpp"
+    ],
+    "numstat": {
+      "src/a.cpp": [
+        10,
+        2
+      ]
+    }
+  },
+  "text_files": {
+    "src/a.cpp": "int a() { return 1; }\n"
+  }
+}

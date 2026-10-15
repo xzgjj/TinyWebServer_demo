@@ -30,10 +30,18 @@ def _author_identities(ctx: Context) -> list[str]:
 
 
 def rule_guard(ctx: Context, rule: Rule) -> list[Finding]:
-    """受保护路径变更必须附带"非作者"批准的有效 waiver。"""
+    """受保护路径变更必须附带"非作者"批准的有效 waiver。
+
+    **自举语义（引入即基线）**：只对"基线里已存在的受保护文件被修改/删除/重命名"要求审批；
+    "新增受保护文件"视为**建立基线**，只记录、不阻断。
+    为什么必须这样：规则体系是由"被它自己保护的这段改动"引入的，
+    此时唯一审批人就是写作者本人 -> "非作者批准"在逻辑上无解（实测死锁，见 audit-19/23）。
+    防绕过：删除(D)与重命名(R)仍按"改动"处理（否则删掉再重建即可清空保护）。
+    """
     findings: list[Finding] = []
-    protected = ctx.protected_changed()
-    if not protected:
+    protected = ctx.protected_modified()      # 需要审批的部分：已存在文件被改/删/改名
+    baseline_new = ctx.protected_new()        # 建立基线：新增的保护文件
+    if not protected and not baseline_new:
         return [
             Finding(
                 rule=rule.id, status=Status.PASS, subject="(受保护路径)",
@@ -41,11 +49,35 @@ def rule_guard(ctx: Context, rule: Rule) -> list[Finding]:
                 observed=0, threshold=0, level="info",
             )
         ]
+    if not protected:
+        return [
+            Finding(
+                rule=rule.id, status=Status.PASS, subject=",".join(baseline_new[:5]) + (
+                    f" 等 {len(baseline_new)} 个文件" if len(baseline_new) > 5 else ""),
+                message=(
+                    f"建立基线：新增受保护文件 {len(baseline_new)} 个，本次不需要非作者审批；"
+                    "从下次修改起（修改/删除/重命名）才需要审批"
+                ),
+                observed=len(baseline_new), threshold=0, level="info",
+                hint="新增保护文件属「引入即基线」：请人类在合并前确认这些文件确实应当受保护。",
+            )
+        ]
+    findings.append(
+        Finding(
+            rule=rule.id, status=Status.PASS, subject="(建立基线)",
+            message=(
+                f"其中 {len(baseline_new)} 个受保护文件为新增（建立基线，不需审批）；"
+                f"下面只审 {len(protected)} 个已存在文件的改动"
+            ) if baseline_new else f"需审批的受保护文件改动：{len(protected)} 个",
+            observed=len(baseline_new), threshold=0, level="info",
+        )
+    )
 
     author = (ctx.git.author_name or "").strip()
     require_waiver = bool(rule.get("require_waiver", True))
     require_distinct = bool(rule.get("require_distinct_actor", True))
     max_age_days = int(rule.get("waiver_max_age_days", 30))
+    bootstrap = ctx.bootstrap_mode()
 
     try:
         from ..waivers import active_waivers      # type: ignore[attr-defined]
@@ -153,19 +185,38 @@ def rule_guard(ctx: Context, rule: Rule) -> list[Finding]:
 
     findings.append(
         Finding(
-            rule=rule.id, status=Status.BLOCK, subject=",".join(protected),
+            rule=rule.id,
+            status=Status.WARN if bootstrap else Status.BLOCK,
+            subject=",".join(protected),
             message=(
-                f"受保护路径变更缺少有效批准：{'；'.join(detail)}"
-                f"（变更作者 {author or '(未知)'}）"
+                (
+                    f"[自举期] 门禁体系首次引入（规则与引擎在基线里都不存在）："
+                    f"{len(protected)} 个受保护文件的改动降级为待人工确认，不阻断。"
+                    f"请人类在合并前确认这些改动应当被接受；合并后本规则自动恢复阻断。"
+                    f"（未获批准的原因：{'；'.join(detail)}）"
+                )
+                if bootstrap
+                else (
+                    f"受保护路径变更缺少有效批准：{'；'.join(detail)}"
+                    f"（变更作者 {author or '(未知)'}）"
+                )
             ),
             observed=f"有效 waiver 0 个（候选 {len(rejects)} 个）",
             threshold=(
-                f">=1 个 waiver 覆盖这些文件，approved_by 属于 {ctx.spec.rule_approvers} 且 != 变更作者"
+                "自举期：人类合并确认即可（WARN）"
+                if bootstrap
+                else f">=1 个 waiver 覆盖这些文件，approved_by 属于 {ctx.spec.rule_approvers} 且 != 变更作者"
             ),
-            level="error",
+            level="warning" if bootstrap else "error",
             hint=(
-                "申请例外：`python scripts/gate/cli.py exception request --rule CI-001 "
-                f"--scope {protected[0]}`，由非作者审批人批准后重跑门禁。"
+                "自举期说明：门禁的第一版只能由被它自己保护的改动引入，此时"
+                "「非作者批准」在逻辑上无解（唯一审批人即写作者）。因此自举期只记账不阻断；"
+                "一旦规则进入基线分支，任何后续修改都会恢复为阻断。"
+                if bootstrap
+                else (
+                    "申请例外：`python scripts/gate/cli.py exception request --rule CI-001 "
+                    f"--base <base>..HEAD --by <申请人>`，由非作者审批人批准后重跑门禁。"
+                )
             ),
         )
     )

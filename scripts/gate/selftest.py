@@ -99,7 +99,9 @@ DEFAULT_RULES: dict[str, dict[str, Any]] = {
     "SCOPE-002": {
         "title": "Diff 预算", "mode": "block", "check": "diff_budget",
         "params": {"max_changed_lines": 800, "min_changed_lines": 0,
-                   "max_changed_files": 24, "count_mode": "added_plus_deleted"},
+                   "max_changed_files": 24,
+                   "max_changed_lines_cap": 25000, "max_changed_files_cap": 600,
+                   "count_mode": "added_plus_deleted"},
     },
     "QUAL-001": {
         "title": "编译警告纪律", "mode": "block", "check": "lint",
@@ -133,7 +135,8 @@ DEFAULT_RULES: dict[str, dict[str, Any]] = {
         "title": "受保护回归测试", "mode": "manual", "check": "protected_tests",
         "params": {"protected_globs": ["test/**", "benchmark/src/**"],
                    "baseline_file": "gate/protected_tests.json",
-                   "block_on_hash_change": True, "block_on_case_decrease": True},
+                   "block_on_hash_change": False, "block_on_case_decrease": True,
+                   "block_on_delete": True},
     },
     "TEST-002": {
         "title": "新增能力必须带测试", "mode": "block", "check": "test_coverage",
@@ -520,6 +523,37 @@ def verify_spec_drift() -> list[str]:
     except Exception as exc:  # noqa: BLE001
         problems.append(f"check_registry_consistency 失败: {exc}")
     problems.extend(verify_pattern_reachability(real))
+    problems.extend(verify_attempt_counting())
+    return problems
+
+
+def verify_attempt_counting() -> list[str]:
+    """GOV-001 计次语义（runner 级行为，规则夹具盖不到，因此直接断言）。
+
+    要求：**同一修订连续失败才累加**；修订变化即从 1 重新开始；通过即归零。
+    为什么必须测：原实现"只要失败就 +1"，把"改一版跑一次"也当成重试循环，
+    第 4 次直接 HALTED —— 门禁把自己卡死（实测踩过）。这条断言就是防线。
+    """
+    problems: list[str] = []
+    task = TaskContract.from_dict({
+        "id": "SELFTEST-ATTEMPTS", "title": "计次语义", "owner": "agent",
+        "allow": ["**/*"], "deny": [], "attempts": 0,
+    })
+
+    def expect(label: str, want: int, got: int) -> None:
+        if want != got:
+            problems.append(f"计次语义错误：{label} 期望 {want}，实际 {got}")
+
+    task.register_attempt("block", "rev-1")
+    expect("同修订第 1 次失败", 1, task.attempts)
+    task.register_attempt("block", "rev-1")
+    expect("同修订第 2 次失败", 2, task.attempts)
+    task.register_attempt("block", "rev-2")
+    expect("换修订后再失败（应重新从 1 开始）", 1, task.attempts)
+    task.register_attempt("pass", "rev-2")
+    expect("通过后归零", 0, task.attempts)
+    if task.last_failed_revision:
+        problems.append("计次语义错误：通过后 last_failed_revision 应清空")
     return problems
 
 

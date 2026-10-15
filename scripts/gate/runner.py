@@ -11,6 +11,8 @@ from __future__ import annotations
 import concurrent.futures
 import platform
 import shutil
+import hashlib
+import subprocess
 import sys
 import time
 import traceback
@@ -379,6 +381,39 @@ def _halt_info(spec: Spec, task: TaskContract | None, reason: str) -> dict[str, 
 # --------------------------------------------------------------------------- #
 # 主流程
 # --------------------------------------------------------------------------- #
+#: 门禁自己的记账文件：它们会**因为跑门禁而改变**，不能算进"修订指纹"，
+#: 否则每次运行指纹都不同 -> 计数永远归 1 -> 重试上限形同虚设（实测踩过）。
+_BOOKKEEPING = ("gate/tasks/", "gate/ledger.jsonl", "gate/waivers.jsonl",
+                "local/", "build/", "audit_report.md")
+
+
+def _is_bookkeeping(path: str) -> bool:
+    return any(path.startswith(prefix) for prefix in _BOOKKEEPING)
+
+
+def revision_fingerprint(ctx: Context) -> str:
+    """本次被判定内容的修订指纹：提交 + 规格 + 工作区改动（排除门禁自身记账文件）。
+
+    用途：GOV-001 的"同一修订连续失败才计次"。只要改动了代码/契约/规格，
+    指纹就变，计数从 1 重新开始 —— 这样"改一版跑一次"是正常迭代，
+    而"原样重跑"才会被判定为原地打转。
+    """
+    status = sorted(f"{k}:{v}" for k, v in (ctx.git.status_map or {}).items()
+                    if not _is_bookkeeping(k))
+    parts = [str(ctx.git.commit or ""), str(ctx.spec.spec_hash or ""), "|".join(status)]
+    excludes = [f":(exclude){p.rstrip('/')}/**" if p.endswith("/") else f":(exclude){p}"
+                for p in _BOOKKEEPING]
+    try:
+        diff = subprocess.run(
+            ["git", "diff", "HEAD", "--", ".", *excludes],
+            cwd=str(ctx.root), capture_output=True, text=True, timeout=30,
+        ).stdout
+        parts.append(hashlib.sha1(diff.encode("utf-8", "replace")).hexdigest()[:12])
+    except (OSError, subprocess.SubprocessError):
+        parts.append("nodiff")
+    return hashlib.sha1("|".join(parts).encode("utf-8", "replace")).hexdigest()[:16]
+
+
 def run_gate(
     root: Path,
     spec_path: Path | None = None,
@@ -461,7 +496,7 @@ def run_gate(
 
     # 尝试计数：register_attempt 后超出上限 -> 整体 HALTED(2)
     if task is not None:
-        task.register_attempt(verdict.value)
+        task.register_attempt(verdict.value, revision_fingerprint(ctx))
         if verdict is not Status.PASS and task.attempts > spec.max_gate_attempts:
             verdict = Status.HALTED
             task.state = "HALTED"

@@ -87,6 +87,14 @@ class GitFacts:
         keys = list(self.numstat) if paths is None else [p for p in paths if p in self.numstat]
         return sum(a + d for (a, d) in (self.numstat[k] for k in keys))
 
+    def status_of(self, path: str) -> str:
+        """规整后的改动状态：A=新增 / M=修改 / D=删除 / R=重命名 / ?=未知。
+
+        `git diff --name-status` 会给出 `R100` 这类带相似度的码，所以只取首字母。
+        """
+        code = (self.status_map.get(path) or "").strip().upper()
+        return code[0] if code else "?"
+
     def added(self) -> int:
         return sum(a for a, _ in self.numstat.values())
 
@@ -280,6 +288,47 @@ class Context:
 
     def protected_changed(self) -> list[str]:
         return [p for p in self.git.changed if self.is_protected(p)]
+
+    def protected_new(self) -> list[str]:
+        """本次改动中**新增**的受保护文件（在被比对基线里不存在）。
+
+        判定依据是改动状态（`A` = added）而不是"文件存在与否"：
+        区间模式下 status 来自 `git diff --name-status <base>..HEAD`，
+        状态为 A 就意味着它在基线里不存在。
+        """
+        return [p for p in self.protected_changed() if self.git.status_of(p) == "A"]
+
+    def protected_modified(self) -> list[str]:
+        """本次改动中**已存在**的受保护文件被修改/删除/重命名（需要非作者审批）。
+
+        新增（A）不算"改动"：规则体系首次引入时，这些文件在基线里根本不存在，
+        要求"非作者批准自己的引入"在逻辑上无解（唯一审批人就是写作者）。
+        删除（D）与重命名（R）**必须**算改动，否则"删掉保护文件再重建"就能绕过。
+        """
+        return [p for p in self.protected_changed() if self.git.status_of(p) != "A"]
+
+    def bootstrap_mode(self) -> bool:
+        """是否处于"门禁体系自举期"（规则与引擎在基线里都还不存在）。
+
+        为什么需要这个概念：门禁的第一版只能由"被它自己保护的改动"引入，
+        此时要求"非作者批准"在逻辑上无解 —— 唯一审批人就是写作者。
+        判据是**事实**而非声明：spec 文件与引擎入口在本次比对基线里都不存在（状态均为 A）。
+        想伪造就得先把整个引擎从基线分支删掉，那本身是一个巨大且显眼的 diff。
+        自举期的效果：受保护路径变更降级为 WARN（仍然记账、仍然要人看），
+        一旦合并到基线分支（规则已存在），本规则自动恢复为阻断。
+        """
+        if "bootstrap_mode" in self.cache:
+            return bool(self.cache["bootstrap_mode"])
+        spec_rel = self.spec.path.relative_to(self.root).as_posix() \
+            if self.spec.path.is_absolute() and self.root in self.spec.path.parents \
+            else "gate/spec.toml"
+        engine = "scripts/gate/runner.py"
+        result = all(
+            self.git.status_of(rel) == "A" and self.is_protected(rel)
+            for rel in (spec_rel, engine)
+        )
+        self.cache["bootstrap_mode"] = result
+        return result
 
     # ---- 规格 -------------------------------------------------------------- #
     def rule(self, rule_id: str) -> Rule:

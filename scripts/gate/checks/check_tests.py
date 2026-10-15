@@ -107,6 +107,7 @@ def protected_tests(ctx: Context, rule: Rule) -> list[Finding]:
     globs: list[str] = list(rule.get("protected_globs") or [])
     block_on_hash = bool(rule.get("block_on_hash_change", True))
     block_on_case = bool(rule.get("block_on_case_decrease", True))
+    block_on_delete = bool(rule.get("block_on_delete", True))
 
     current_files: list[str] = []
     for pattern in globs:
@@ -174,22 +175,36 @@ def protected_tests(ctx: Context, rule: Rule) -> list[Finding]:
 
     new_files = [p for p in current_files if p not in entries]
     for rel in changed + deleted:
-        kind = "已删除" if rel in deleted else "内容被修改"
-        status = Status.MANUAL if block_on_hash else Status.WARN
+        is_deleted = rel in deleted
+        kind = "已删除" if is_deleted else "内容被修改"
+        # 三态设计（对齐"机器判定 / 人工判断"的边界）：
+        #   * 删除受保护测试      -> 必须硬拦。这是"让失败消失"的典型手法，机器可判定；
+        #   * 用例数下降          -> 硬拦（另一段逻辑），同样机器可判定；
+        #   * 仅内容被修改        -> 告警 + 提请人审，不阻断。因为"加强/修正断言"也是内容变化，
+        #     它到底合理与否只有人能判断；把这种情况做成硬阻断会把正常改进逼成"申请例外"，
+        #     反而鼓励人们去关规则（实测：本轮 3 个测试都是加强断言，却被卡成 MANUAL）。
+        hard = (is_deleted and block_on_delete) or (not is_deleted and block_on_hash)
         findings.append(
             Finding(
-                rule=rule.id, status=status, subject=rel,
+                rule=rule.id,
+                status=Status.MANUAL if hard else Status.WARN,
+                subject=rel,
                 message=(
                     f"受保护测试 {kind}（sha256 与基线不一致）"
-                    + ("，需要非作者审批" if block_on_hash else "")
+                    + ("：删除受保护测试属硬阻断，需人工批准的例外"
+                       if is_deleted else
+                       "：内容变化提请人工确认（是否属于加强/修正断言）" if not hard else
+                       "，需要非作者审批")
                 ),
                 observed="sha256 changed" if rel in changed else "missing",
                 threshold=str((entries.get(rel) or {}).get("sha256", ""))[:12] + "…",
-                level="error" if block_on_hash else "warning",
+                level="error" if hard else "warning",
                 evidence=baseline_rel,
                 hint=(
-                    "需要非作者审批：`python scripts/gate/cli.py exception request --rule TEST-001`"
-                    "（由 meta.rule_approvers 中的人批准后重跑门禁）"
+                    "删除测试必须走人工例外：`python scripts/gate/cli.py exception request "
+                    "--rule TEST-001 --base <base>..HEAD --by <申请人>`"
+                    if is_deleted else
+                    "请人工确认这次改动是加强断言而不是放宽判定；确认后无需例外，本条不阻断。"
                 ),
             )
         )
