@@ -20,6 +20,15 @@ CHECKS = ("rule_guard", "retry_cap", "audit")
 # --------------------------------------------------------------------------- #
 # CI-001 规则文件变更须指定人批准
 # --------------------------------------------------------------------------- #
+def _author_identities(ctx: Context) -> list[str]:
+    """被审查改动集的全部作者身份（"名字 <邮箱>" 形式）；退化时用 git config。"""
+    facts = ctx.git
+    authors = list(getattr(facts, "authors", []) or [])
+    if not authors and facts.author_name:
+        authors = [facts.author_name]
+    return [str(a) for a in authors]
+
+
 def rule_guard(ctx: Context, rule: Rule) -> list[Finding]:
     """受保护路径变更必须附带"非作者"批准的有效 waiver。"""
     findings: list[Finding] = []
@@ -85,6 +94,13 @@ def rule_guard(ctx: Context, rule: Rule) -> list[Finding]:
         if require_distinct and author and approved_by == author:
             rejects.append((wid, f"approved_by 与变更作者相同（{approved_by}）"))
             continue
+        if require_distinct:
+            # 被审查的改动集可能由多个身份提交（人 + 代理）：只要批准人写过其中任意一个
+            # 提交，就属于自批。只看 git config 会被"改一下 user.name"绕过（实测可行）。
+            offenders = [a for a in _author_identities(ctx) if approved_by in a]
+            if offenders:
+                rejects.append((wid, f"approved_by 是该改动集的作者之一（{offenders[0]}）"))
+                continue
         expiry = _parse_dt(getattr(waiver, "expires_at", None))
         now = datetime.now(timezone.utc)
         if expiry is not None:

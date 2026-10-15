@@ -76,6 +76,8 @@ class GitFacts:
     branch: str = ""
     author_name: str = ""
     author_email: str = ""
+    #: 被审查改动集的**全部**提交作者（range 模式取自 git log，worktree 模式取 git config）
+    authors: list[str] = field(default_factory=list)
     changed: list[str] = field(default_factory=list)          # 已改动（含 untracked）
     numstat: dict[str, tuple[int, int]] = field(default_factory=dict)  # path -> (add, del)
     status_map: dict[str, str] = field(default_factory=dict)  # path -> porcelain 状态码
@@ -127,6 +129,19 @@ def collect_git(root: Path, ref_range: str = "") -> GitFacts:
     facts.branch = out("rev-parse", "--abbrev-ref", "HEAD").strip()
     facts.author_name = out("config", "user.name").strip()
     facts.author_email = out("config", "user.email").strip()
+    facts.authors = [facts.author_name] if facts.author_name else []
+
+    # range 模式下，"变更作者"必须取自**提交元数据**而不是 git config：
+    #   * config 只是"当前这台机器的默认身份"，任何人改一下就能冒充别人（可被绕过）；
+    #   * 被审查的是一段提交，其作者可能不止一个（人 + 代理），必须都看到。
+    if ref_range:
+        raw_authors = out("log", "--format=%an <%ae>", ref_range)
+        uniq = [a.strip() for a in dict.fromkeys(raw_authors.splitlines()) if a.strip()]
+        if uniq:
+            facts.authors = uniq
+            newest = out("log", "-1", "--format=%an", ref_range).strip()
+            if newest:
+                facts.author_name = newest
 
     if ref_range:
         ns_rc, ns = out_rc("diff", "--numstat", ref_range)
