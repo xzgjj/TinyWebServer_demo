@@ -46,4 +46,14 @@ if [ "$build_rc" -ne 0 ]; then
 fi
 echo "warnings=$(grep -c 'warning:' /tmp/tws_build.log || true)"
 
-ctest --test-dir "$BD" --output-on-failure --timeout 120 2>&1 | tail -5
+# 只取 ctest 的判定行与标签汇总，避免 tail 把 "100% tests passed" 截掉
+ctest --test-dir "$BD" --output-on-failure --timeout 120 > /tmp/tws_ctest.log 2>&1
+ctest_rc=$?
+grep -E 'tests passed|tests failed' /tmp/tws_ctest.log | tail -2
+grep -E '^(portable|smoke|socket|integration) ' /tmp/tws_ctest.log
+if [ "$ctest_rc" -ne 0 ]; then
+  echo "--- ctest 失败明细（尾 20 行）---"
+  tail -20 /tmp/tws_ctest.log
+  exit 1
+fi
+exit 0

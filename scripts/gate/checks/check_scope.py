@@ -13,6 +13,22 @@ from . import evidence_path, write_text_atomic
 CHECKS = ("scope", "diff_budget")
 
 
+def _git_unavailable(rule_id: str, rule: Rule) -> Finding:
+    """git 读不到事实时的统一处置。
+
+    为什么必须是 ERROR 而不是 PASS：改动集为空时，SCOPE/预算类规则会"零对象"通过 ——
+    那是**看起来通过，其实什么都没检查**（实测：MSYS2 环境 PATH 里没有 git，
+    门禁直接判 PASS）。环境不满足必须显式失败，绝不能静默放行。
+    """
+    return Finding(
+        rule=rule_id, status=Status.ERROR, subject="(git 事实)",
+        message="git 不可用（未找到 git 或不在仓库工作区），无法获取改动集：范围与预算类判定不可信",
+        observed="git rev-parse 失败", threshold="可用的 git 工作区",
+        level="error",
+        hint="安装 git 并确保在仓库内运行；或改用 --base 区间模式在 CI 中执行。",
+    )
+
+
 # --------------------------------------------------------------------------- #
 # SCOPE-001 改动范围白名单
 # --------------------------------------------------------------------------- #
@@ -26,6 +42,8 @@ def scope(ctx: Context, rule: Rule) -> list[Finding]:
          allow 为空 = "未限定范围"，此时只受 deny / default_deny 约束。
     """
     findings: list[Finding] = []
+    if not ctx.git.available:
+        return [_git_unavailable(rule.id, rule)]
     require_contract = bool(rule.get("require_task_contract", False))
     default_deny: list[str] = list(rule.get("default_deny") or [])
     task = ctx.task
@@ -125,6 +143,8 @@ def _first_match(path: str, patterns: list[str]) -> str | None:
 def diff_budget(ctx: Context, rule: Rule) -> list[Finding]:
     """改动行数/文件数超预算即 BLOCK；本 check 负责写出 diffstat 证据文件。"""
     findings: list[Finding] = []
+    if not ctx.git.available:
+        return [_git_unavailable(rule.id, rule)]
     min_lines = 0
     if ctx.task is not None:
         max_lines, max_files, min_lines = ctx.task.effective_limits(rule)

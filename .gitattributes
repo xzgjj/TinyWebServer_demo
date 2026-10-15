@@ -1,0 +1,30 @@
+# 换行符纪律（跨平台协作的硬要求）
+#
+# 背景：bash 脚本若是 CRLF，在 WSL/Linux 下会以 `\r` 结尾导致命令失败；
+# 而仓库历史上没有这条规则，git 每次都会提示 "LF will be replaced by CRLF"。
+# 这里统一：仓库内一律存 LF，检出时也保持 LF（Windows 侧由 Git 与编辑器容忍）。
+* text=auto eol=lf
+
+# 明确必须 LF 的类型（脚本/配置/源码/文档）
+*.sh    text eol=lf
+*.py    text eol=lf
+*.toml  text eol=lf
+*.json  text eol=lf
+*.jsonl text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.h     text eol=lf
+*.hpp   text eol=lf
+*.cpp   text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+
+# 二进制/生成物：不做换行转换
+*.png   binary
+*.jpg   binary
+*.exe   binary
+*.a     binary
+*.o     binary
+*.pyc   binary

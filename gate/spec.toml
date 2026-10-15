@@ -37,6 +37,9 @@ exclude_globs = [
     "build/**", "build_*/**", "third_party/**", "benchmark_results/**",
     "local/**", "__pycache__/**", "**/__pycache__/**", ".git/**",
     "Testing/**", "audit_report_backups/**", "test_result/**", "*.pyc",
+    # 门禁自身的负向夹具里**故意**写了坏代码（超复杂度、越界特性、死代码…），
+    # 它们是测试数据而不是产品代码，必须排除，否则门禁会把自己的夹具当成违规。
+    "gate/fixtures/**",
 ]
 
 # 默认参与 diff 预算/范围检查的代码扩展名

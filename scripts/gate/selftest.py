@@ -170,7 +170,9 @@ DEFAULT_META: dict[str, Any] = {
                         "scripts/gate/", ".github/workflows/", "CODEOWNERS"],
     "exclude_globs": ["build/**", "build_*/**", "third_party/**", "benchmark_results/**",
                       "local/**", "__pycache__/**", "**/__pycache__/**", ".git/**",
-                      "Testing/**", "audit_report_backups/**", "test_result/**", "*.pyc"],
+                      "Testing/**", "audit_report_backups/**", "test_result/**", "*.pyc",
+                      # 负向夹具里故意写坏代码，属测试数据而非产品代码（与 spec.toml 保持一致）
+                      "gate/fixtures/**"],
     "code_exts": [".cpp", ".h", ".hpp", ".cc", ".cxx", ".ipp", ".inl"],
 }
 

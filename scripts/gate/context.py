@@ -70,6 +70,7 @@ def match_any(path: str, patterns: Iterable[str]) -> bool:
 class GitFacts:
     mode: str = "worktree"                  # worktree | range
     ref_range: str = ""                     # 仅 range 模式: "A..B"
+    available: bool = True                  # git 是否真的读到了事实（collect_git 会显式覆盖）
     commit: str = ""
     commit_subject: str = ""
     branch: str = ""
@@ -114,6 +115,7 @@ def collect_git(root: Path, ref_range: str = "") -> GitFacts:
             return ""
 
     facts.commit = out("rev-parse", "--short", "HEAD").strip()
+    facts.available = bool(facts.commit)
     facts.commit_subject = out("log", "-1", "--pretty=%s").strip()
     facts.branch = out("rev-parse", "--abbrev-ref", "HEAD").strip()
     facts.author_name = out("config", "user.name").strip()
