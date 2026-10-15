@@ -1,93 +1,145 @@
+# =============================================================================
+# TinyWebServer — 多标准 / 多编译器 / 多平台构建配置
+# -----------------------------------------------------------------------------
+# 设计要点（与门禁规则一一对应）：
+#   1. 标准可切换：TWS_CXX_STANDARD=17|20|23（默认 23），严格模式（无 gnu 扩展），
+#      由 STD-001 白名单约束实际可用特性（见 doc/cxx_standard_matrix.md）。
+#   2. 平台可切换：WIN32 -> 使用 include/platform/win32 兼容层；否则 POSIX 原生。
+#   3. 警告策略与编译器绑定，不使用任何"只在某个编译器下存在"的裸 flag。
+#   4. 不依赖 bash/grep 等外部 shell 工具（Windows 与 WSL2 行为一致）。
+#   5. 测试按能力打标签：portable（跨平台可运行）与 socket（Windows 上运行验收在 WSL2）。
+# =============================================================================
+cmake_minimum_required(VERSION 3.20)
+project(TinyWebServer VERSION 8.0 LANGUAGES CXX)
 
-cmake_minimum_required(VERSION 3.16)
-project(TinyWebServer VERSION 3.0 LANGUAGES CXX)
 include(CTest)
 
-# 设置 FetchContent 策略
 if(POLICY CMP0077)
     cmake_policy(SET CMP0077 NEW)
 endif()
 
-# --- 1. 编译选项与开关 ---
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# --- 0. 用户可配置选项 -------------------------------------------------------
+set(TWS_CXX_STANDARD "23" CACHE STRING "C++ 标准版本：17 / 20 / 23")
+set_property(CACHE TWS_CXX_STANDARD PROPERTY STRINGS 17 20 23)
 
-# ✅ 修复1：优化默认行为 - Debug模式默认开启ASan，Release模式关闭
-option(ENABLE_ASAN "Enable AddressSanitizer for debugging" ON)
+option(TWS_WERROR        "把警告当错误（CI 严格模式）"            OFF)
+option(TWS_NATIVE_ARCH   "启用 -march=native（本机专用，CI 关闭）" OFF)
+option(TWS_ENABLE_CLANG_TIDY "构建时运行 clang-tidy（需已安装）"   OFF)
 
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+option(ENABLE_ASAN "Debug 下启用 AddressSanitizer" ON)
+option(ENABLE_UBSAN "启用 UndefinedBehaviorSanitizer" OFF)
+option(BUILD_BENCHMARKS "构建性能基准测试框架" ON)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "构建类型" FORCE)
 endif()
 
-message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+set(CMAKE_CXX_STANDARD ${TWS_CXX_STANDARD})
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)          # 严格 -std=c++NN，保证跨工具链一致
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)  # 供 clangd/VS Code Problems 面板使用
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# 输出目录统一到构建根，便于脚本与门禁定位产物
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+foreach(cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${cfg} ${CMAKE_BINARY_DIR})
+endforeach()
+
+# --- 1. 平台与编译器探测 -----------------------------------------------------
+if(WIN32)
+    set(TWS_PLATFORM "win32")
+else()
+    set(TWS_PLATFORM "posix")
+endif()
+
+if(MSVC)
+    set(TWS_COMPILER_ID "msvc")
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(TWS_COMPILER_ID "clang")
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    set(TWS_COMPILER_ID "gcc")
+else()
+    set(TWS_COMPILER_ID "unknown")
+endif()
+
+message(STATUS "=========================================")
+message(STATUS "TinyWebServer 构建配置")
+message(STATUS "  编译器     : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "  C++ 标准   : c++${TWS_CXX_STANDARD} (严格模式, 扩展=${CMAKE_CXX_EXTENSIONS})")
+message(STATUS "  平台       : ${TWS_PLATFORM} (${CMAKE_SYSTEM_NAME})")
+message(STATUS "  构建类型   : ${CMAKE_BUILD_TYPE}")
+message(STATUS "  ASan/UBSan : ${ENABLE_ASAN}/${ENABLE_UBSAN}")
+message(STATUS "  Werror     : ${TWS_WERROR}")
+message(STATUS "  测试/基准  : BUILD_TESTING=${BUILD_TESTING} BUILD_BENCHMARKS=${BUILD_BENCHMARKS}")
 message(STATUS "=========================================")
 
-# 通用优化标志
-set(COMMON_FLAGS "-Wall -Wextra -g -fno-omit-frame-pointer -march=native")
-
-# ✅ 修复2：正确处理Debug和Release模式的ASan配置
-if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND ENABLE_ASAN)
-    set(DEBUG_FLAGS "${COMMON_FLAGS} -O0 -fsanitize=address -fsanitize=undefined")
-    set(LINKER_FLAGS_DEBUG "-fsanitize=address -fsanitize=undefined")
-    message(STATUS "Debug模式: ASan ENABLED")
-elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(DEBUG_FLAGS "${COMMON_FLAGS} -O0")
-    set(LINKER_FLAGS_DEBUG "")
-    message(STATUS "Debug模式: ASan DISABLED")
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(RELEASE_FLAGS "${COMMON_FLAGS} -O3 -DNDEBUG")
-    set(LINKER_FLAGS_RELEASE "")
-    message(STATUS "Release模式: 性能优化 ENABLED")
+# --- 2. 编译标志（按编译器分支，避免"某个编译器不认识的 flag"） ---------------
+set(TWS_WARN_FLAGS "")
+if(TWS_COMPILER_ID STREQUAL "gcc" OR TWS_COMPILER_ID STREQUAL "clang")
+    list(APPEND TWS_WARN_FLAGS -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion)
+    if(TWS_WERROR)
+        list(APPEND TWS_WARN_FLAGS -Werror)
+    endif()
+elseif(TWS_COMPILER_ID STREQUAL "msvc")
+    list(APPEND TWS_WARN_FLAGS /W4)
+    if(TWS_WERROR)
+        list(APPEND TWS_WARN_FLAGS /WX)
+    endif()
 endif()
 
-# 设置编译标志
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(CMAKE_CXX_FLAGS "${DEBUG_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${LINKER_FLAGS_DEBUG}")
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(CMAKE_CXX_FLAGS "${RELEASE_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${LINKER_FLAGS_RELEASE}")
+set(TWS_COMMON_FLAGS "")
+if(TWS_COMPILER_ID STREQUAL "gcc" OR TWS_COMPILER_ID STREQUAL "clang")
+    list(APPEND TWS_COMMON_FLAGS -g -fno-omit-frame-pointer)
+    if(TWS_NATIVE_ARCH)
+        list(APPEND TWS_COMMON_FLAGS -march=native)
+    endif()
 endif()
 
-# ✅ 修复3：设置所有可执行文件输出到build根目录
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR})
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR})
+# 严格标准模式下，POSIX 扩展（accept4/SOCK_NONBLOCK/EFD_* 等）需要显式打开
+if(TWS_PLATFORM STREQUAL "posix")
+    add_compile_definitions(_GNU_SOURCE)
+endif()
 
-# --- 2. 依赖与核心库 ---
+set(TWS_SANITIZE_FLAGS "")
+if(TWS_COMPILER_ID STREQUAL "gcc" OR TWS_COMPILER_ID STREQUAL "clang")
+    if(ENABLE_ASAN AND NOT WIN32)
+        list(APPEND TWS_SANITIZE_FLAGS -fsanitize=address)
+    elseif(ENABLE_ASAN AND WIN32)
+        message(STATUS "  提示       : Windows(MinGW) 下默认不启用 ASan（运行库支持不稳定），如需请显式 -DENABLE_ASAN=ON 并自行确认 libasan 可用")
+    endif()
+    if(ENABLE_UBSAN)
+        list(APPEND TWS_SANITIZE_FLAGS -fsanitize=undefined)
+    endif()
+elseif(TWS_COMPILER_ID STREQUAL "msvc")
+    if(ENABLE_ASAN)
+        list(APPEND TWS_SANITIZE_FLAGS /fsanitize=address)
+    endif()
+endif()
+
+# --- 3. 依赖 -----------------------------------------------------------------
 find_package(Threads REQUIRED)
 
-# GTest for unit testing
 find_package(GTest QUIET)
 if(GTest_FOUND)
-    message(STATUS "GTest found: ${GTest_VERSION}")
+    message(STATUS "GTest: ${GTest_VERSION}")
 else()
-    message(WARNING "GTest not found, some tests will be disabled")
+    message(STATUS "GTest: 未找到 — 依赖 gtest 的测试目标将被跳过（Linux 上 apt install libgtest-dev）")
 endif()
 
-# JSON 库依赖 (nlohmann/json)
-# 优先级：1) find_package 2) 本地 third_party/json.hpp
 find_package(nlohmann_json 3.11.2 QUIET)
 if(nlohmann_json_FOUND)
-    message(STATUS "nlohmann/json found via find_package")
+    message(STATUS "nlohmann/json: find_package")
 elseif(EXISTS ${PROJECT_SOURCE_DIR}/third_party/json.hpp)
-    message(STATUS "Using local nlohmann/json from third_party/json.hpp")
-    # 创建接口库以提供包含路径
     add_library(nlohmann_json_local INTERFACE)
     target_include_directories(nlohmann_json_local INTERFACE ${PROJECT_SOURCE_DIR}/third_party)
-    # 创建别名以匹配 find_package 的目标名
     add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json_local)
+    message(STATUS "nlohmann/json: third_party/json.hpp（本地头文件）")
 else()
-    message(WARNING "nlohmann/json not found and local third_party/json.hpp not available")
-    message(WARNING "Please download json.hpp from: https://github.com/nlohmann/json/releases/download/v3.11.2/json.hpp")
-    message(WARNING "And place it at: third_party/json.hpp")
-    # 创建空接口库以避免构建失败
-    add_library(nlohmann_json_fallback INTERFACE)
-    # 创建别名以匹配 find_package 的目标名
-    add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json_fallback)
+    message(FATAL_ERROR "缺少 nlohmann/json：请放置 third_party/json.hpp 或安装 nlohmann-json3-dev")
 endif()
 
-# ✅ 修复4：完整包含路径
+# --- 4. 公共接口库 -----------------------------------------------------------
 add_library(project_configs INTERFACE)
 target_include_directories(project_configs INTERFACE
     ${PROJECT_SOURCE_DIR}/include
@@ -100,22 +152,44 @@ target_include_directories(project_configs INTERFACE
     ${PROJECT_SOURCE_DIR}/include/http
     ${PROJECT_SOURCE_DIR}/include/http2
     ${PROJECT_SOURCE_DIR}/include/plugin
+    ${PROJECT_SOURCE_DIR}/include/platform
     ${PROJECT_SOURCE_DIR}/third_party
     ${PROJECT_SOURCE_DIR}/test
 )
 
-# ✅ 修复5：源文件完整性检查
-message(STATUS "=========================================")
-message(STATUS "源文件结构自检")
-message(STATUS "=========================================")
+if(TWS_PLATFORM STREQUAL "win32")
+    # 兼容头层必须最先被搜索到：源文件里的 <sys/socket.h>/<arpa/inet.h> 等
+    # 在 MinGW 上不存在，由本目录提供等价声明（实现在 src/platform/）。
+    target_include_directories(project_configs BEFORE INTERFACE
+        ${PROJECT_SOURCE_DIR}/include/platform/win32)
+    target_compile_definitions(project_configs INTERFACE
+        TWS_PLATFORM_WIN32=1
+        WIN32_LEAN_AND_MEAN=1
+        NOMINMAX=1
+        _WIN32_WINNT=0x0601)
+endif()
 
-# 核心源文件列表（手动指定以确保完整性）
-set(CORE_SOURCES_LIST
+target_compile_options(project_configs INTERFACE
+    ${TWS_WARN_FLAGS} ${TWS_COMMON_FLAGS} ${TWS_SANITIZE_FLAGS})
+target_link_options(project_configs INTERFACE ${TWS_SANITIZE_FLAGS})
+
+if(TWS_ENABLE_CLANG_TIDY)
+    find_program(CLANG_TIDY_EXE NAMES clang-tidy)
+    if(CLANG_TIDY_EXE)
+        set(CMAKE_CXX_CLANG_TIDY ${CLANG_TIDY_EXE})
+    else()
+        message(WARNING "TWS_ENABLE_CLANG_TIDY=ON 但未找到 clang-tidy，忽略")
+    endif()
+endif()
+
+# --- 5. 核心源文件 -----------------------------------------------------------
+set(CORE_SOURCES
     src/server.cpp
     src/connection.cpp
     src/http_request.cpp
     src/http_parser.cpp
     src/thread_pool.cpp
+    src/timer_manager.cpp
     src/error.cpp
     src/error/error.cpp
     src/timer/timer_wheel.cpp
@@ -144,165 +218,146 @@ set(CORE_SOURCES_LIST
     src/plugin/example_plugin.cpp
 )
 
-# 检查每个源文件是否存在
-set(VALID_CORE_SOURCES "")
-foreach(src ${CORE_SOURCES_LIST})
-    if(EXISTS ${PROJECT_SOURCE_DIR}/${src})
-        list(APPEND VALID_CORE_SOURCES ${PROJECT_SOURCE_DIR}/${src})
-        message(STATUS "✓ 确认: ${src}")
-    else()
-        message(WARNING "⚠️ 缺失: ${src}")
+set(MISSING_CORE "")
+foreach(src ${CORE_SOURCES})
+    if(NOT EXISTS ${PROJECT_SOURCE_DIR}/${src})
+        list(APPEND MISSING_CORE ${src})
     endif()
 endforeach()
+if(MISSING_CORE)
+    message(FATAL_ERROR "核心源文件缺失: ${MISSING_CORE}")
+endif()
+list(LENGTH CORE_SOURCES CORE_COUNT)
+message(STATUS "核心源文件: ${CORE_COUNT} 个（完整性已校验）")
 
-# 如果没有找到任何有效源文件，则使用file(GLOB)作为备选
-if("${VALID_CORE_SOURCES}" STREQUAL "")
-    message(STATUS "未找到手动指定的源文件，尝试自动搜索...")
-    file(GLOB_RECURSE AUTO_CORE_SOURCES 
-        ${PROJECT_SOURCE_DIR}/src/*.cpp
-        ${PROJECT_SOURCE_DIR}/reactor/*.cpp
-    )
-    set(VALID_CORE_SOURCES ${AUTO_CORE_SOURCES})
-    foreach(src ${VALID_CORE_SOURCES})
-        file(RELATIVE_PATH rel_path ${PROJECT_SOURCE_DIR} ${src})
-        message(STATUS "✓ 自动发现: ${rel_path}")
-    endforeach()
+add_library(webserver_core STATIC ${CORE_SOURCES})
+target_link_libraries(webserver_core PUBLIC Threads::Threads project_configs nlohmann_json::nlohmann_json)
+
+if(TWS_PLATFORM STREQUAL "win32")
+    target_sources(webserver_core PRIVATE
+        src/platform/win32_backend.cpp
+        src/platform/win32_filemap.cpp
+        src/platform/win32_compat.cpp)
+    target_link_libraries(webserver_core PUBLIC ws2_32)
 endif()
 
-# 检查timer_manager.cpp是否存在（如果使用）
-set(TIMER_MANAGER_FILE ${PROJECT_SOURCE_DIR}/src/timer_manager.cpp)
-if(EXISTS ${TIMER_MANAGER_FILE})
-    list(APPEND VALID_CORE_SOURCES ${TIMER_MANAGER_FILE})
-    message(STATUS "✓ 添加: src/timer_manager.cpp")
+# --- 6. 运行时目录（不依赖 bash） --------------------------------------------
+file(MAKE_DIRECTORY ${PROJECT_SOURCE_DIR}/public
+                    ${PROJECT_SOURCE_DIR}/local/logs
+                    ${PROJECT_SOURCE_DIR}/local/logs/benchmark)
+if(NOT EXISTS ${PROJECT_SOURCE_DIR}/public/index.html)
+    file(WRITE ${PROJECT_SOURCE_DIR}/public/index.html "<h1>TinyWebServer V8</h1>\n")
 endif()
-
-# 创建核心静态库
-if(NOT "${VALID_CORE_SOURCES}" STREQUAL "")
-    add_library(webserver_core STATIC ${VALID_CORE_SOURCES})
-    target_link_libraries(webserver_core PUBLIC Threads::Threads project_configs nlohmann_json::nlohmann_json)
-    message(STATUS "✅ 核心库 webserver_core 配置完成")
-else()
-    message(FATAL_ERROR "❌ 未找到任何有效的核心源文件")
-endif()
-
-# --- 3. 构建主程序 ---
-if(EXISTS ${PROJECT_SOURCE_DIR}/src/main.cpp)
-    add_executable(server src/main.cpp)
-    target_link_libraries(server PRIVATE webserver_core project_configs)
-    message(STATUS "✅ 主程序 server 配置完成")
-else()
-    message(WARNING "⚠️ 未找到主程序入口: src/main.cpp")
-endif()
-
-# --- 4. 自动化测试分类管理 ---
-set(ALL_TEST_TARGETS "")
-if(BUILD_TESTING)
-    message(STATUS "")
-    message(STATUS "=========================================")
-    message(STATUS "测试文件加载自检")
-    message(STATUS "=========================================")
-
-    # A. 功能与集成测试
-    set(INTEGRATION_TESTS
-        test_timer
-        test_lifecycle
-        test_single_connection
-        test_multi_connection
-        test_client_close
-        test_backpressure
-        test_stress
-        test_main
-        test_multithread_reactor
-        test_basic
-        test_log
-        test_bounded_logger
-        test_structured_log
-        test_request_validator
-        test_keep_alive
-        test_conditional_request
-        test_memory_pool
-        test_multi_listen_socket
-        test_batch_io_handler
-        test_so_reuseport_integration
-    )
-
-    # 需要GTest的测试列表
-    set(TESTS_REQUIRING_GTEST
-        test_multi_listen_socket
-        test_batch_io_handler
-        test_so_reuseport_integration
-    )
-
-    # 适合 CI 的快速冒烟集
-    set(CI_SMOKE_TESTS
-        test_timer
-        test_basic
-        test_multithread_reactor
-        test_log
-    )
-
-    # B. 性能基准测试
-    set(BENCHMARK_TESTS
-        test_log_bench
-    )
-
-    # 合并去重
-    set(ALL_TEST_TARGETS ${INTEGRATION_TESTS})
-    foreach(test ${BENCHMARK_TESTS})
-        list(APPEND ALL_TEST_TARGETS ${test})
-    endforeach()
-    list(REMOVE_DUPLICATES ALL_TEST_TARGETS)
-
-    # 批量生成测试目标并注册到 ctest
-    foreach(test_name ${ALL_TEST_TARGETS})
-        set(TEST_FILE ${PROJECT_SOURCE_DIR}/test/${test_name}.cpp)
-        if(EXISTS ${TEST_FILE})
-            add_executable(${test_name} test/${test_name}.cpp)
-            target_link_libraries(${test_name} PRIVATE webserver_core project_configs nlohmann_json::nlohmann_json)
-            if(${test_name} IN_LIST TESTS_REQUIRING_GTEST AND GTest_FOUND)
-                target_link_libraries(${test_name} PRIVATE GTest::gtest GTest::gtest_main)
-                message(STATUS "  → 链接GTest库: ${test_name}")
-            endif()
-            add_test(NAME ${test_name} COMMAND ${test_name})
-            set_tests_properties(${test_name} PROPERTIES TIMEOUT 30)
-
-            if(test_name IN_LIST CI_SMOKE_TESTS)
-                set_tests_properties(${test_name} PROPERTIES LABELS "smoke;integration")
-            elseif(test_name IN_LIST BENCHMARK_TESTS)
-                set_tests_properties(${test_name} PROPERTIES LABELS "benchmark")
-            else()
-                set_tests_properties(${test_name} PROPERTIES LABELS "integration")
-            endif()
-
-            message(STATUS "✓ 加载测试用例: ${test_name}")
-        else()
-            message(WARNING "⚠️ 跳过测试用例: ${test_name} (文件缺失)")
-        endif()
-    endforeach()
-endif()
-
-# --- 运行时目录初始化 ---
-# 创建必要的运行时目录和默认文件（项目根目录）
 add_custom_target(create_runtime_dirs ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory ${PROJECT_SOURCE_DIR}/public
     COMMAND ${CMAKE_COMMAND} -E make_directory ${PROJECT_SOURCE_DIR}/local/logs
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${PROJECT_SOURCE_DIR}/local/logs/benchmark
-    COMMAND bash -c "test -f '${PROJECT_SOURCE_DIR}/public/index.html' || echo '<h1>TinyWebServer V3</h1>' > '${PROJECT_SOURCE_DIR}/public/index.html'"
-    COMMAND ${CMAKE_COMMAND} -E echo "创建运行时目录和默认文件：public/, local/logs/, local/logs/benchmark/, public/index.html"
-    COMMENT "创建运行时目录结构和默认文件"
+    COMMENT "运行时目录就绪"
+    VERBATIM)
+
+# --- 7. 主程序 ---------------------------------------------------------------
+if(EXISTS ${PROJECT_SOURCE_DIR}/src/main.cpp)
+    add_executable(server src/main.cpp)
+    target_link_libraries(server PRIVATE webserver_core project_configs)
+else()
+    message(FATAL_ERROR "缺少主程序入口 src/main.cpp")
+endif()
+
+# --- 8. 测试 -----------------------------------------------------------------
+# 标签语义：
+#   smoke     —— 快速冒烟（PR 必跑）
+#   portable  —— 不依赖 socket，多平台可运行（Windows 上必须能跑）
+#   socket    —— 依赖 socket/网络；Windows 上的运行验收由 WSL2 承担
+#   gtest     —— 依赖 GTest
+set(TEST_TARGETS
+    test_timer
+    test_lifecycle
+    test_single_connection
+    test_multi_connection
+    test_client_close
+    test_backpressure
+    test_stress
+    test_main
+    test_multithread_reactor
+    test_basic
+    test_log
+    test_bounded_logger
+    test_structured_log
+    test_request_validator
+    test_keep_alive
+    test_conditional_request
+    test_memory_pool
+    test_multi_listen_socket
+    test_batch_io_handler
+    test_so_reuseport_integration
 )
 
-# --- 5. 性能基准测试框架 ---
-option(BUILD_BENCHMARKS "Build performance benchmarks" ON)
+set(TESTS_NEEDING_GTEST
+    test_multi_listen_socket
+    test_batch_io_handler
+    test_so_reuseport_integration)
 
+set(TESTS_SMOKE
+    test_timer
+    test_basic
+    test_multithread_reactor
+    test_log
+    test_bounded_logger)
+
+set(TESTS_PORTABLE
+    test_timer
+    test_log
+    test_bounded_logger
+    test_structured_log
+    test_request_validator
+    test_conditional_request
+    test_memory_pool
+    test_batch_io_handler)
+
+set(ALL_TEST_TARGETS "")
+if(BUILD_TESTING)
+    foreach(test_name ${TEST_TARGETS})
+        set(TEST_FILE ${PROJECT_SOURCE_DIR}/test/${test_name}.cpp)
+        if(NOT EXISTS ${TEST_FILE})
+            message(WARNING "跳过测试 ${test_name}：${TEST_FILE} 不存在")
+            continue()
+        endif()
+
+        if(${test_name} IN_LIST TESTS_NEEDING_GTEST AND NOT GTest_FOUND)
+            message(STATUS "跳过测试 ${test_name}：需要 GTest")
+            continue()
+        endif()
+
+        add_executable(${test_name} test/${test_name}.cpp)
+        target_link_libraries(${test_name} PRIVATE webserver_core project_configs nlohmann_json::nlohmann_json)
+        if(${test_name} IN_LIST TESTS_NEEDING_GTEST)
+            target_link_libraries(${test_name} PRIVATE GTest::gtest GTest::gtest_main)
+        endif()
+
+        add_test(NAME ${test_name} COMMAND ${test_name})
+        set_tests_properties(${test_name} PROPERTIES TIMEOUT 90)
+
+        set(labels "integration")
+        if(${test_name} IN_LIST TESTS_SMOKE)
+            list(APPEND labels "smoke")
+        endif()
+        if(${test_name} IN_LIST TESTS_PORTABLE)
+            list(APPEND labels "portable")
+        else()
+            list(APPEND labels "socket")
+        endif()
+        if(${test_name} IN_LIST TESTS_NEEDING_GTEST)
+            list(APPEND labels "gtest")
+        endif()
+        set_tests_properties(${test_name} PROPERTIES LABELS "${labels}")
+        list(APPEND ALL_TEST_TARGETS ${test_name})
+    endforeach()
+    list(LENGTH ALL_TEST_TARGETS TEST_COUNT)
+    message(STATUS "测试目标: ${TEST_COUNT} 个（portable=${TESTS_PORTABLE}）")
+endif()
+
+# --- 9. 基准测试框架 ---------------------------------------------------------
 if(BUILD_BENCHMARKS)
-    message(STATUS "")
-    message(STATUS "=========================================")
-    message(STATUS "基准测试框架加载")
-    message(STATUS "=========================================")
-
-    # 基准测试源文件
-    set(BENCHMARK_SOURCES_LIST
+    set(BENCHMARK_SOURCES
         benchmark/src/benchmark_base.cpp
         benchmark/src/benchmark_qps.cpp
         benchmark/src/benchmark_latency.cpp
@@ -311,70 +366,45 @@ if(BUILD_BENCHMARKS)
         benchmark/src/benchmark_factory.cpp
         benchmark/src/benchmark_step_stress.cpp
     )
-
-    # 检查每个源文件是否存在
     set(VALID_BENCHMARK_SOURCES "")
-    foreach(src ${BENCHMARK_SOURCES_LIST})
+    foreach(src ${BENCHMARK_SOURCES})
         if(EXISTS ${PROJECT_SOURCE_DIR}/${src})
             list(APPEND VALID_BENCHMARK_SOURCES ${PROJECT_SOURCE_DIR}/${src})
-            message(STATUS "✓ 确认基准测试源文件: ${src}")
         else()
-            message(WARNING "⚠️ 缺失基准测试源文件: ${src}")
+            message(WARNING "基准测试源文件缺失: ${src}")
         endif()
     endforeach()
 
-    # 基准测试运行器
     if(EXISTS ${PROJECT_SOURCE_DIR}/benchmark/src/benchmark_runner.cpp)
         add_executable(benchmark_runner benchmark/src/benchmark_runner.cpp ${VALID_BENCHMARK_SOURCES})
         target_link_libraries(benchmark_runner PRIVATE webserver_core project_configs nlohmann_json::nlohmann_json)
-        message(STATUS "✅ 基准测试运行器 benchmark_runner 配置完成")
-
-        # 添加到测试目标列表（便于统一管理）
-        list(APPEND ALL_TEST_TARGETS "benchmark_runner")
     else()
-        message(WARNING "⚠️ 未找到基准测试运行器: benchmark/src/benchmark_runner.cpp")
+        message(WARNING "缺少 benchmark/src/benchmark_runner.cpp")
     endif()
 
-    # 示例配置文件复制（构建时）
+    set(BENCHMARK_CONFIGS
+        qps_config.json latency_config.json memory_config.json
+        concurrent_config.json step_stress_config.json)
+    set(COPY_CONFIG_CMDS "")
+    foreach(cfg ${BENCHMARK_CONFIGS})
+        if(EXISTS ${PROJECT_SOURCE_DIR}/configs/benchmark/${cfg})
+            list(APPEND COPY_CONFIG_CMDS
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    ${PROJECT_SOURCE_DIR}/configs/benchmark/${cfg}
+                    ${CMAKE_BINARY_DIR}/configs/benchmark/)
+        endif()
+    endforeach()
     add_custom_target(copy_benchmark_configs ALL
         COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/configs/benchmark
-        COMMAND ${CMAKE_COMMAND} -E copy
-            ${PROJECT_SOURCE_DIR}/configs/benchmark/qps_config.json
-            ${CMAKE_BINARY_DIR}/configs/benchmark/
-        COMMAND ${CMAKE_COMMAND} -E copy
-            ${PROJECT_SOURCE_DIR}/configs/benchmark/latency_config.json
-            ${CMAKE_BINARY_DIR}/configs/benchmark/
-        COMMAND ${CMAKE_COMMAND} -E copy
-            ${PROJECT_SOURCE_DIR}/configs/benchmark/memory_config.json
-            ${CMAKE_BINARY_DIR}/configs/benchmark/
-        COMMAND ${CMAKE_COMMAND} -E copy
-            ${PROJECT_SOURCE_DIR}/configs/benchmark/concurrent_config.json
-            ${CMAKE_BINARY_DIR}/configs/benchmark/
-        COMMAND ${CMAKE_COMMAND} -E copy
-            ${PROJECT_SOURCE_DIR}/configs/benchmark/step_stress_config.json
-            ${CMAKE_BINARY_DIR}/configs/benchmark/
-        COMMENT "复制基准测试配置文件到构建目录"
-    )
-
-
-    message(STATUS "✅ 基准测试框架配置完成")
+        ${COPY_CONFIG_CMDS}
+        COMMENT "复制基准测试配置"
+        VERBATIM)
 endif()
 
-# --- 最终提示 ---
-message(STATUS "")
+# --- 10. 门禁友好的摘要输出 --------------------------------------------------
 message(STATUS "=========================================")
-message(STATUS "✅ 项目配置完成 [简洁优化版]")
-message(STATUS "编译环境: C++17 | ${CMAKE_BUILD_TYPE}")
-message(STATUS "✅ 所有可执行文件将生成在: ${CMAKE_BINARY_DIR}")
-message(STATUS "✅ 核心库: webserver_core")
-if(BUILD_TESTING)
-    message(STATUS "✅ 测试用例总数: ${ALL_TEST_TARGETS}")
-else()
-    message(STATUS "✅ BUILD_TESTING=OFF，跳过测试目标")
-endif()
-if(BUILD_BENCHMARKS)
-    message(STATUS "✅ 基准测试框架: ENABLED")
-else()
-    message(STATUS "✅ 基准测试框架: DISABLED")
-endif()
+message(STATUS "配置完成: c++${TWS_CXX_STANDARD} | ${TWS_PLATFORM} | ${TWS_COMPILER_ID} | ${CMAKE_BUILD_TYPE}")
+message(STATUS "  compile_commands.json : ${CMAKE_BINARY_DIR}/compile_commands.json")
+message(STATUS "  portable 测试         : ctest -L portable")
+message(STATUS "  smoke 测试            : ctest -L smoke")
 message(STATUS "=========================================")

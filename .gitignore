@@ -39,3 +39,7 @@ diff.md
 server_output.txt
 test_simple.sh
 integration_test.log
+.pulse.json
+__pycache__/
+*.pyc
+gate/index.db
