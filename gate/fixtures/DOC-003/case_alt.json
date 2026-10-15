@@ -1,0 +1,13 @@
+{
+  "rule": "DOC-003",
+  "title": "CLAUDE.md 声明 C++23 而 CMake 实际默认 C++17",
+  "expect_status": [
+    "block"
+  ],
+  "_files_dir": "files_alt",
+  "git": {
+    "changed": [
+      "CLAUDE.md"
+    ]
+  }
+}

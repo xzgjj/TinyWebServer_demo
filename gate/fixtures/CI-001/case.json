@@ -1,0 +1,16 @@
+{
+  "rule": "CI-001",
+  "title": "受保护路径被执行者本人改动，且例外账本校验不过",
+  "expect_status": [
+    "block"
+  ],
+  "fake_modules": [
+    "waivers_empty"
+  ],
+  "git": {
+    "changed": [
+      "gate/spec.toml"
+    ],
+    "author_name": "selftest-bot"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "rule": "CODE-002",
+  "title": "两个函数体归一化后完全相同的代码窗口",
+  "expect_status": [
+    "warn"
+  ],
+  "git": {
+    "changed": [
+      "src/dup_scan.cpp"
+    ]
+  }
+}

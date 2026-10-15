@@ -1,0 +1,13 @@
+{
+  "rule": "TEST-001",
+  "title": "受保护测试用例数下降（删掉一个 TEST）",
+  "expect_status": [
+    "block"
+  ],
+  "_files_dir": "files_alt",
+  "git": {
+    "changed": [
+      "test/test_basic.cpp"
+    ]
+  }
+}

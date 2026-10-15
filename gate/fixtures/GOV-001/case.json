@@ -1,0 +1,14 @@
+{
+  "rule": "GOV-001",
+  "title": "任务连续失败 3 次达到上限（HALTED）",
+  "expect_status": [
+    "halted"
+  ],
+  "task": {
+    "id": "SELFTEST-HALT",
+    "attempts": 3
+  },
+  "git": {
+    "changed": []
+  }
+}

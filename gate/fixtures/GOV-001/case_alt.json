@@ -1,0 +1,20 @@
+{
+  "rule": "GOV-001",
+  "title": "任务只失败 2 次，未达上限（不得 HALTED）",
+  "expect_status": [
+    "pass"
+  ],
+  "forbid_status": [
+    "block",
+    "manual",
+    "halted",
+    "error"
+  ],
+  "task": {
+    "id": "SELFTEST-OK",
+    "attempts": 2
+  },
+  "git": {
+    "changed": []
+  }
+}

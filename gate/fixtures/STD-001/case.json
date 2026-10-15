@@ -1,0 +1,12 @@
+{
+  "rule": "STD-001",
+  "title": "使用了 <print>/std::expected 且不在 TWS_HAS_ 保护块内",
+  "expect_status": [
+    "block"
+  ],
+  "git": {
+    "changed": [
+      "src/feature.cpp"
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "rule": "QUAL-002",
+  "title": "函数圈复杂度 21 超过上限 15",
+  "expect_status": [
+    "block"
+  ],
+  "git": {
+    "changed": [
+      "src/classify.cpp"
+    ]
+  }
+}

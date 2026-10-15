@@ -1,0 +1,10 @@
+{
+  "rule": "GOV-002",
+  "title": "审计账本模块缺失（ledger.py 未交付）-> 必须阻断",
+  "expect_status": [
+    "block"
+  ],
+  "git": {
+    "changed": []
+  }
+}

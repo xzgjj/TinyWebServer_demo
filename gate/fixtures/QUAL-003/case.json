@@ -1,0 +1,12 @@
+{
+  "rule": "QUAL-003",
+  "title": "build/compile_commands.json 缺失",
+  "expect_status": [
+    "block"
+  ],
+  "git": {
+    "changed": [
+      "src/a.cpp"
+    ]
+  }
+}

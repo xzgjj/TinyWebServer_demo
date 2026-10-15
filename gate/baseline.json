@@ -1,0 +1,29 @@
+{
+  "_comment": "存量棘轮基线：门禁只允许这些数字下降，不允许上升。修改本文件属受保护路径（CI-001 需非作者审批）。",
+  "generated_at": "2026-10-15T18:10:00+08:00",
+  "generator": "人工标定：doc_chars 由字数统计得出；warnings 取 WSL2 全量构建集的 QUAL-001 实测值；complexity 取 QUAL-002 在 audit-09 上的实测值；cppcheck 取 Windows(MSYS2) 实测值。",
+  "doc_chars": {
+    "CLAUDE.md": 3727,
+    "implementation_plan.md": 13947
+  },
+  "warnings": {
+    "g++": 57,
+    "clang++": 418
+  },
+  "complexity": {
+    "src/main.cpp:main": {
+      "cyclomatic": 27,
+      "lines": 178,
+      "nesting": 6
+    },
+    "test/test_main.cpp:IntegrationTest_FullFlow": {
+      "cyclomatic": 27,
+      "lines": 221,
+      "nesting": 6
+    },
+    "test/test_multi_connection.cpp:ConcurrentConnectionTest": {
+      "nesting": 5
+    }
+  },
+  "cppcheck": 73
+}

@@ -1,0 +1,13 @@
+{
+  "rule": "QUAL-001",
+  "title": "新增编译警告（-Wunused-parameter）超过基线 0",
+  "expect_status": [
+    "block"
+  ],
+  "note": "本机无可用编译器时该规则只会 WARN，属于环境降级，不算误报",
+  "git": {
+    "changed": [
+      "src/warny.cpp"
+    ]
+  }
+}

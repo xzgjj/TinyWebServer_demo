@@ -1,0 +1,16 @@
+{
+  "rule": "DOC-001",
+  "title": "预算文档超限 + 存量文档棘轮增长",
+  "expect_status": [
+    "block"
+  ],
+  "min_findings": 2,
+  "note": "CLAUDE.md 超 3000 预算；implementation_plan.md 比基线多 1 字",
+  "git": {
+    "changed": [
+      "CLAUDE.md",
+      "implementation_plan.md",
+      "doc/notes.md"
+    ]
+  }
+}

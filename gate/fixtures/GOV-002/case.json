@@ -1,0 +1,13 @@
+{
+  "rule": "GOV-002",
+  "title": "账本缺少必需字段 -> BLOCK",
+  "expect_status": [
+    "block"
+  ],
+  "fake_modules": [
+    "ledger_bad"
+  ],
+  "git": {
+    "changed": []
+  }
+}

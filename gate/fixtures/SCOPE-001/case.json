@@ -1,0 +1,12 @@
+{
+  "rule": "SCOPE-001",
+  "title": "未声明任务契约（require_task_contract=true）",
+  "expect_status": [
+    "block"
+  ],
+  "git": {
+    "changed": [
+      "src/a.cpp"
+    ]
+  }
+}

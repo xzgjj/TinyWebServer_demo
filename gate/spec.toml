@@ -1,0 +1,244 @@
+# ============================================================================
+# TinyWebServer Gate Specification (人工可读、机器可判定)
+# ----------------------------------------------------------------------------
+# 设计约束：
+#   1. 本文件是"规则"的唯一真相源，受 CI-001 保护：任何变更都需要
+#      approved_by != 变更作者，且 approver 必须属于 meta.rule_approvers。
+#   2. 每条规则只有两种归宿：机器可判定(block/warn/ratchet) 或 转人工(manual)。
+#      不允许存在"看起来在检查但实际永远绿"的规则。
+#   3. 阈值全部集中在此处，代码里不得硬编码阈值（阈值变更 = 规则变更）。
+#   4. 每条规则必须有一个负向 fixture（gate/fixtures/<ID>/），
+#      由 `python scripts/gate/selftest.py` 验证"该红时必须红"。
+# ============================================================================
+
+[meta]
+spec_version        = "1.0.0"
+project             = "TinyWebServer_demo"
+max_gate_attempts   = 3                       # 同一任务连续失败上限，超出 -> HALTED(exit 2)
+rule_approvers      = ["xzgjj"]               # 规则文件变更的合法审批人（必须 != 变更作者）
+report_dir          = "local/gate"            # 运行产物（.gitignore）
+ledger_path         = "gate/ledger.jsonl"     # 审计账本（append-only，入版本控制）
+waiver_path         = "gate/waivers.jsonl"    # 例外账本（append-only，入版本控制）
+task_dir            = "gate/tasks"            # 任务契约目录
+baseline_path       = "gate/baseline.json"    # 存量棘轮基线（ratchet 规则用）
+
+# 受保护路径：变更 -> CI-001，需要"非作者"审批
+protected_paths = [
+    "gate/spec.toml",
+    "gate/protected_tests.json",
+    "gate/baseline.json",
+    "scripts/gate/",
+    ".github/workflows/",
+    "CODEOWNERS",
+]
+
+# 全门禁统一忽略（构建产物/第三方/结果目录），避免"工具输出"污染判定
+exclude_globs = [
+    "build/**", "build_*/**", "third_party/**", "benchmark_results/**",
+    "local/**", "__pycache__/**", "**/__pycache__/**", ".git/**",
+    "Testing/**", "audit_report_backups/**", "test_result/**", "*.pyc",
+]
+
+# 默认参与 diff 预算/范围检查的代码扩展名
+code_exts = [".cpp", ".h", ".hpp", ".cc", ".cxx", ".ipp", ".inl"]
+
+
+# ---------------------------------------------------------------------------
+# A 族：文档纪律  （对应失败模式：堆细节 / 文档一旦脱节就乱）
+# ---------------------------------------------------------------------------
+
+[rules.DOC-001]
+title = "文档字数预算"
+mode  = "block"
+check = "doc_budget"
+desc  = "预算内文档不得超过 words_budget；存量文档按 ratchet 冻结（只许减不许增）；记录/分析类不设上限。"
+[rules.DOC-001.params]
+unit = "non_whitespace_chars"                 # 口径：非空白字符数（中英一致）
+# 新文档（用户指定 3000 字上限）
+budgets = { "SPEC.md" = 3000, "CLI.md" = 3000, "AGENT_EXECUTION_PROTOCOL.md" = 3000 }
+# 存量文档：用户决策（2026-10-15）= 豁免绝对上限，但受"不得增长"棘轮约束。
+# 棘轮基线记在 gate/baseline.json 的 doc_chars 段；只允许减少，增加即阻断。
+grandfathered = ["CLAUDE.md", "implementation_plan.md"]
+# 记录/分析类文档：不设上限（但仍受 DOC-002 重复检查）
+unlimited_globs = ["doc/**", "notes.txt", "diff.md", "audit_report.md", "README.md"]
+
+[rules.DOC-002]
+title = "重复段落检查"
+mode  = "block"
+check = "doc_dup"
+desc  = "同一文档内不允许出现重复段落块；跨文档重复率超阈值即视为【堆细节】。"
+[rules.DOC-002.params]
+min_block_chars   = 40                        # 段落块最小长度（非空白字符）
+max_intra_dup     = 0                         # 单文档内重复块上限
+max_cross_ratio   = 0.05                      # 跨文档重复块占比上限
+
+[rules.DOC-003]
+title = "文档-代码一致性"
+mode  = "block"
+check = "doc_refs"
+desc  = "文档中引用的仓库内文件路径必须真实存在；CLAUDE.md 声明的 C++ 标准必须与 CMake 实际默认标准一致。"
+[rules.DOC-003.params]
+docs          = ["CLAUDE.md", "README.md", "SPEC.md", "CLI.md", "AGENT_EXECUTION_PROTOCOL.md", "doc/architecture_overview.md"]
+check_paths   = true
+check_cxx_std = true
+
+
+# ---------------------------------------------------------------------------
+# B 族：代码纪律  （对应失败模式：堆细节、造多余抽象）
+# ---------------------------------------------------------------------------
+
+[rules.CODE-001]
+title = "死代码与未使用符号"
+mode  = "block"
+check = "dead_code"
+desc  = "新增/修改文件中不得引入未使用的私有字段、未使用的静态函数、注释掉的整段代码块。"
+[rules.CODE-001.params]
+enabled            = true
+max_commented_block_lines = 12                # 连续注释代码块超过此长度 -> 命中
+max_unused_private_fields = 0
+max_unused_static_functions = 0
+
+[rules.CODE-002]
+title = "重复代码块"
+mode  = "warn"
+check = "dup_code"
+desc  = "归一化后 >= min_lines 行的重复代码窗口数量不得超过阈值（防【复制粘贴式堆细节】）。"
+[rules.CODE-002.params]
+min_lines    = 8
+max_dup_blocks = 2
+
+
+# ---------------------------------------------------------------------------
+# C 族：改动纪律  （对应失败模式：小任务变成大重构）
+# ---------------------------------------------------------------------------
+
+[rules.SCOPE-001]
+title = "改动范围白名单"
+mode  = "block"
+check = "scope"
+desc  = "本次改动必须落在任务契约的 scope.allow 内，且不得触碰 scope.deny；未声明契约时按 spec 的默认 deny 执行。"
+[rules.SCOPE-001.params]
+default_deny = ["third_party/**", "public/**", "LICENSE"]
+require_task_contract = true
+
+[rules.SCOPE-002]
+title = "Diff 预算"
+mode  = "block"
+check = "diff_budget"
+desc  = "单次任务改动行数/文件数不得超过任务契约预算（默认 500-800 行区间上限 800）。"
+[rules.SCOPE-002.params]
+max_changed_lines = 800
+min_changed_lines = 0                         # 下界仅记录，不阻断
+max_changed_files = 24
+count_mode        = "added_plus_deleted"      # 统计口径：git numstat 增+删
+
+
+# ---------------------------------------------------------------------------
+# D 族：质量纪律  （对应失败模式：代码能跑，但读不懂）
+# ---------------------------------------------------------------------------
+
+[rules.QUAL-001]
+title = "编译警告纪律"
+mode  = "block"
+check = "lint"
+desc  = "在指定编译器/标准下编译，新增警告数不得超过基线；-Werror 模式下任何警告即失败。"
+[rules.QUAL-001.params]
+compilers     = ["g++", "clang++"]
+standard      = "c++23"
+flags         = ["-Wall", "-Wextra", "-Wpedantic", "-Wconversion", "-Wsign-conversion"]
+max_new_warnings = 0
+timeout_s     = 900
+
+[rules.QUAL-002]
+title = "复杂度上限"
+mode  = "block"
+check = "complexity"
+desc  = "函数圈复杂度、长度、嵌套深度不得超过上限（只对本次改动涉及的文件生效，避免存量全红）。"
+[rules.QUAL-002.params]
+max_cyclomatic   = 15
+max_function_lines = 80
+max_nesting      = 4
+scope            = "changed_files"
+
+[rules.QUAL-003]
+title = "编辑器问题面板为零"
+mode  = "block"
+check = "problems_panel"
+desc  = "compile_commands.json 存在且可由 clangd/cppcheck 无错解析；VS Code Problems 面板应为 0 error。"
+[rules.QUAL-003.params]
+require_compile_commands = true
+cppcheck_enable = true
+cppcheck_max_errors = 0
+
+
+# ---------------------------------------------------------------------------
+# E 族：标准与测试纪律（对应失败模式：改测试让失败消失 / 多工具链翻车）
+# ---------------------------------------------------------------------------
+
+[rules.STD-001]
+title = "C++ 标准特性白名单"
+mode  = "block"
+check = "std_features"
+desc  = "只允许使用四工具链实测交集内的特性；交集外特性必须写在 #if TWS_HAS_* 保护内。"
+[rules.STD-001.params]
+allowed = ["std::to_underlying", "std::string::contains", "std::byteswap", "std::unreachable",
+           "if consteval", "std::span", "std::optional", "std::string_view", "std::filesystem",
+           "std::jthread", "std::source_location", "std::format", "std::bit_cast", "concepts"]
+forbidden_unless_guarded = ["<print>", "<mdspan>", "<flat_map>", "std::expected",
+                            "std::stacktrace", "deducing this", "std::mdspan"]
+guard_macro = "TWS_HAS_"
+
+[rules.TEST-001]
+title = "受保护回归测试"
+mode  = "manual"
+check = "protected_tests"
+desc  = "test/** 是受保护资产：任何修改/删除都需要【非作者】审批；用例数与断言数不得下降。"
+[rules.TEST-001.params]
+protected_globs = ["test/**", "benchmark/src/**"]
+baseline_file   = "gate/protected_tests.json"
+block_on_hash_change = true
+block_on_case_decrease = true
+
+[rules.TEST-002]
+title = "新增能力必须带测试"
+mode  = "block"
+check = "test_coverage"
+desc  = "新增的 src/** 模块必须存在对应 test_*.cpp 且被 CMake 注册；smoke 集必须通过。"
+[rules.TEST-002.params]
+src_globs   = ["src/**/*.cpp", "reactor/**/*.cpp"]
+test_dir    = "test"
+cmake_file  = "CMakeLists.txt"
+require_ctest_smoke = true
+smoke_label = "smoke"
+
+
+# ---------------------------------------------------------------------------
+# F 族：治理纪律（对应失败模式：顺手关闭 CI 规则 / 无限重试 / 无留痕）
+# ---------------------------------------------------------------------------
+
+[rules.CI-001]
+title = "规则文件变更须指定人批准"
+mode  = "block"
+check = "rule_guard"
+desc  = "受保护路径的变更必须附带一条有效 waiver，且 approved_by != 变更作者，approved_by 属于 meta.rule_approvers。"
+[rules.CI-001.params]
+require_waiver        = true
+require_distinct_actor = true
+waiver_max_age_days   = 30
+
+[rules.GOV-001]
+title = "门禁重试轮数上限"
+mode  = "block"
+check = "retry_cap"
+desc  = "同一任务连续失败次数达到 max_gate_attempts 即 HALTED，禁止无限自动重试。"
+[rules.GOV-001.params]
+max_attempts = 3
+reset_requires_human = true
+
+[rules.GOV-002]
+title = "审计留痕"
+mode  = "block"
+check = "audit"
+desc  = "每次运行必须写入 ledger.jsonl（run_id/commit/task/verdict/耗时/waiver），字段缺失即失败。"
+[rules.GOV-002.params]
+required_fields = ["run_id", "task", "commit", "verdict", "started_at", "duration_s", "spec_hash"]

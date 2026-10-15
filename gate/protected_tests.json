@@ -1,0 +1,179 @@
+{
+  "file_count": 28,
+  "files": {
+    "benchmark/src/benchmark_base.cpp": {
+      "assertions": 0,
+      "lines": 535,
+      "sha256": "a34e4a6a25c01210477f8661ef0ccb0cf4221e9860ec5d0c2d7ac753deb9c21a",
+      "test_cases": 0
+    },
+    "benchmark/src/benchmark_concurrent.cpp": {
+      "assertions": 0,
+      "lines": 657,
+      "sha256": "8547bbff8779b8319a3f2edacc5d8c0509cfaad379fe712030b6fe45c6601d77",
+      "test_cases": 0
+    },
+    "benchmark/src/benchmark_factory.cpp": {
+      "assertions": 0,
+      "lines": 63,
+      "sha256": "61e34c43d3be9987f633195fecf87084e9c6ff4a34ff9f2aac6809f4b1697fd1",
+      "test_cases": 0
+    },
+    "benchmark/src/benchmark_latency.cpp": {
+      "assertions": 0,
+      "lines": 425,
+      "sha256": "126dc1fcde323d1ad2081732340ff414794350c18268f55554bd910bd17bf297",
+      "test_cases": 0
+    },
+    "benchmark/src/benchmark_memory.cpp": {
+      "assertions": 0,
+      "lines": 605,
+      "sha256": "e1fc74386b9a3c5952912656f5b393ce163f77c0cbff6be32a27928b55783c3b",
+      "test_cases": 0
+    },
+    "benchmark/src/benchmark_qps.cpp": {
+      "assertions": 0,
+      "lines": 694,
+      "sha256": "d89967f5484df4a6471546a64c1190147efa3b4df0333bd170d201abf23c33d7",
+      "test_cases": 0
+    },
+    "benchmark/src/benchmark_runner.cpp": {
+      "assertions": 0,
+      "lines": 822,
+      "sha256": "35726a108f9a3515b052e1dcd7c7545c13feb82466a9fa3958a3ed841db403c9",
+      "test_cases": 0
+    },
+    "benchmark/src/benchmark_step_stress.cpp": {
+      "assertions": 0,
+      "lines": 623,
+      "sha256": "4a371567a533c60a3ef60dff968fbe6c3a0b9d9deed01ccd6014eded795570a0",
+      "test_cases": 0
+    },
+    "test/test_backpressure.cpp": {
+      "assertions": 0,
+      "lines": 50,
+      "sha256": "0a31757ada109ed3267379b7dd0a17e4139c47e248430823f8295ada4aa8e6ae",
+      "test_cases": 0
+    },
+    "test/test_basic.cpp": {
+      "assertions": 0,
+      "lines": 33,
+      "sha256": "a94b9cc62edc1f2e983bbde1cb520d73ca834de03b4dd7ee018c57f0bff64b03",
+      "test_cases": 0
+    },
+    "test/test_batch_io_handler.cpp": {
+      "assertions": 62,
+      "lines": 265,
+      "sha256": "6ba8d8f30fc79243cc23fe8cc3cb1e06f9105ac068467cfcba2471f3cb2a90db",
+      "test_cases": 10
+    },
+    "test/test_bounded_logger.cpp": {
+      "assertions": 0,
+      "lines": 267,
+      "sha256": "ac935d8a0c911ea24b78d8ca4b065378d5dbea2af9c471e0918d603993f8ce4a",
+      "test_cases": 0
+    },
+    "test/test_client_close.cpp": {
+      "assertions": 0,
+      "lines": 48,
+      "sha256": "10f86699248883fe555297ad0a7f5fe90f91f797d967d9379b89b374dda258df",
+      "test_cases": 0
+    },
+    "test/test_conditional_request.cpp": {
+      "assertions": 0,
+      "lines": 251,
+      "sha256": "88356f5ab61a94f49fd56d2f99b78ecab35eaf48e81144ff3e14f3ca80c6f8e3",
+      "test_cases": 0
+    },
+    "test/test_keep_alive.cpp": {
+      "assertions": 0,
+      "lines": 123,
+      "sha256": "bb07db5359de4825249616fa4a1fb9d0853e34141395e31ef765fdb5efd0fec6",
+      "test_cases": 0
+    },
+    "test/test_lifecycle.cpp": {
+      "assertions": 0,
+      "lines": 54,
+      "sha256": "fd8c4b198d0e2067135ec6904e8cff1c4d3b0501e33751329bbe65abc3c62d28",
+      "test_cases": 0
+    },
+    "test/test_log.cpp": {
+      "assertions": 0,
+      "lines": 61,
+      "sha256": "38a6310464cdfc7933f6d8a1f1ccc2d5be2d2472418dfa3739887fbf4e14fd54",
+      "test_cases": 0
+    },
+    "test/test_main.cpp": {
+      "assertions": 0,
+      "lines": 278,
+      "sha256": "167600eb2b6787998813b1b5f93587e18be373019977c4fa27881e3d5c1d5e75",
+      "test_cases": 0
+    },
+    "test/test_memory_pool.cpp": {
+      "assertions": 0,
+      "lines": 189,
+      "sha256": "c7b1c019d47ddf2e3a66fd45773bd1bdaa9a256c9bb0026e36576bb809ba4cac",
+      "test_cases": 0
+    },
+    "test/test_multi_connection.cpp": {
+      "assertions": 0,
+      "lines": 77,
+      "sha256": "48d4fe85c3d013c241e5a7f94f85fc416e5fd1049eafc2db6f71120615c9c339",
+      "test_cases": 0
+    },
+    "test/test_multi_listen_socket.cpp": {
+      "assertions": 24,
+      "lines": 127,
+      "sha256": "8afe51459cb17a9c9898f39ba2e71ed7e5ee83d9bb5285de2c904abfaa32f560",
+      "test_cases": 6
+    },
+    "test/test_multithread_reactor.cpp": {
+      "assertions": 0,
+      "lines": 56,
+      "sha256": "e126bf8d95e88b951a5ae9bc233cefb9644b3c3aaaa65d309d7a1d735ddb8626",
+      "test_cases": 0
+    },
+    "test/test_request_validator.cpp": {
+      "assertions": 0,
+      "lines": 223,
+      "sha256": "6884dea84dc37f33b7b159ea8c80a6400d630d3a473bf8ef2ff088a69308415f",
+      "test_cases": 0
+    },
+    "test/test_single_connection.cpp": {
+      "assertions": 0,
+      "lines": 78,
+      "sha256": "6a573ff4d49a8953f7bf9dc0ab99d2b31d6f428ba287560712ff7a19c6d91c21",
+      "test_cases": 0
+    },
+    "test/test_so_reuseport_integration.cpp": {
+      "assertions": 16,
+      "lines": 221,
+      "sha256": "f6ecefeb01311e37cc34c3831d641a100293da437ab8e75364c89cb07c8ee5f1",
+      "test_cases": 5
+    },
+    "test/test_stress.cpp": {
+      "assertions": 0,
+      "lines": 101,
+      "sha256": "eafb0cfbb28310c1b07577f36b21575f1146c39479710ef13cd8abdcf6cdab5c",
+      "test_cases": 0
+    },
+    "test/test_structured_log.cpp": {
+      "assertions": 0,
+      "lines": 40,
+      "sha256": "d5100cc326ec00104fc4a038161260edb2911a3d450ad6f2f1948f9f94304696",
+      "test_cases": 0
+    },
+    "test/test_timer.cpp": {
+      "assertions": 0,
+      "lines": 64,
+      "sha256": "246e6161d691ec29f2e50c864080d6d10817af7ae4984327938fad4e8e325d10",
+      "test_cases": 0
+    }
+  },
+  "generated_at": "2026-10-15T17:45:54+0800",
+  "generator": "scripts/gate/checks/check_tests.py::build_baseline",
+  "protected_globs": [
+    "test/**",
+    "benchmark/src/**"
+  ]
+}

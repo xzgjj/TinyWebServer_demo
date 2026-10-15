@@ -1,0 +1,16 @@
+{
+  "rule": "TEST-002",
+  "title": "新增 src 文件但既无 test_*.cpp 也未在 CMakeLists 注册",
+  "expect_status": [
+    "block"
+  ],
+  "git": {
+    "changed": [
+      "src/brand_new.cpp",
+      "CMakeLists.txt"
+    ],
+    "status_map": {
+      "src/brand_new.cpp": "??"
+    }
+  }
+}

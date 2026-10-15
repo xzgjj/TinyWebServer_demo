@@ -1,0 +1,17 @@
+{
+  "generated_at": "2026-01-01T00:00:00+0000",
+  "generator": "gate/fixtures/TEST-001 (手工夹具)",
+  "protected_globs": [
+    "test/**",
+    "benchmark/src/**"
+  ],
+  "file_count": 1,
+  "files": {
+    "test/test_basic.cpp": {
+      "sha256": "d9807d3a9b3b1b26504ad39b44eec6a0ad20d24b1db7b05a9d9f3bc4cebc91de",
+      "test_cases": 2,
+      "assertions": 3,
+      "lines": 6
+    }
+  }
+}

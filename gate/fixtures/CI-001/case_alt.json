@@ -1,0 +1,14 @@
+{
+  "rule": "CI-001",
+  "title": "例外账本模块缺失（waivers.py 未交付）-> 必须阻断",
+  "expect_status": [
+    "block"
+  ],
+  "_files_dir": "files_missing_module",
+  "git": {
+    "changed": [
+      "gate/spec.toml"
+    ],
+    "author_name": "selftest-bot"
+  }
+}

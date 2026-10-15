@@ -1,0 +1,55 @@
+{
+  "rule": "_clean",
+  "title": "干净仓库：16 条规则都不许误报",
+  "kind": "clean",
+  "task": {
+    "id": "SELFTEST-CLEAN",
+    "allow": [
+      "**/*"
+    ],
+    "deny": []
+  },
+  "fake_modules": [
+    "waivers_empty",
+    "ledger_ok"
+  ],
+  "git": {
+    "changed": [
+      "src/main.cpp",
+      "CMakeLists.txt",
+      "CLAUDE.md",
+      "test/test_basic.cpp"
+    ],
+    "status_map": {
+      "src/main.cpp": "M",
+      "CMakeLists.txt": "M",
+      "CLAUDE.md": "M",
+      "test/test_basic.cpp": "M"
+    },
+    "numstat": {
+      "src/main.cpp": [
+        25,
+        0
+      ],
+      "CMakeLists.txt": [
+        18,
+        0
+      ],
+      "CLAUDE.md": [
+        15,
+        0
+      ],
+      "test/test_basic.cpp": [
+        8,
+        0
+      ]
+    }
+  },
+  "mtime_now": [
+    "build/Testing/Temporary/LastTest.log",
+    "src/main.cpp",
+    "CMakeLists.txt",
+    "gate/baseline.json"
+  ],
+  "note": "gate/baseline.json 与 gate/protected_tests.json 不列入 changed：它们是门禁自身基线，且属受保护路径（改它们自然会触发 CI-001）"
+}

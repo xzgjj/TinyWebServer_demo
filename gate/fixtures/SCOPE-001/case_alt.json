@@ -1,0 +1,19 @@
+{
+  "rule": "SCOPE-001",
+  "title": "改动触碰 params.default_deny（public/**）",
+  "expect_status": [
+    "block"
+  ],
+  "task": {
+    "id": "SELFTEST-DENY",
+    "allow": [
+      "**/*"
+    ],
+    "deny": []
+  },
+  "git": {
+    "changed": [
+      "public/index.html"
+    ]
+  }
+}

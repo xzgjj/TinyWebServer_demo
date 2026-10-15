@@ -1,0 +1,14 @@
+{
+  "rule": "TEST-001",
+  "title": "受保护测试内容被修改（sha256 与基线不一致）",
+  "expect_status": [
+    "manual"
+  ],
+  "note": "断言数不变，仅内容变化 -> 转人工（需要非作者审批）",
+  "git": {
+    "changed": [
+      "test/test_basic.cpp"
+    ]
+  },
+  "text_files": {}
+}

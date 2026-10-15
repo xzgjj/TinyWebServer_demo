@@ -1,0 +1,17 @@
+{
+  "rule": "QUAL-003",
+  "title": "compile_commands 存在但 cppcheck 报 warning",
+  "expect_status": [
+    "block"
+  ],
+  "note": "本机无 cppcheck 时只会 WARN（环境降级），属预期；selftest 据此按 requires 判为 SKIP",
+  "requires": [
+    "cppcheck"
+  ],
+  "_files_dir": "files_alt",
+  "git": {
+    "changed": [
+      "src/a.cpp"
+    ]
+  }
+}

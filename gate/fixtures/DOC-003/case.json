@@ -1,0 +1,12 @@
+{
+  "rule": "DOC-003",
+  "title": "文档引用了不存在的仓库内路径 (doc_refs)",
+  "expect_status": [
+    "block"
+  ],
+  "git": {
+    "changed": [
+      "CLAUDE.md"
+    ]
+  }
+}

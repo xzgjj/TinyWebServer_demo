@@ -1,0 +1,26 @@
+{
+  "rule": "SCOPE-002",
+  "title": "改动 900 行超过 task 契约 500 行上限",
+  "expect_status": [
+    "block"
+  ],
+  "task": {
+    "id": "SELFTEST-BUDGET",
+    "allow": [
+      "**/*"
+    ],
+    "max_changed_lines": 500,
+    "max_changed_files": 2
+  },
+  "git": {
+    "changed": [
+      "src/todo_notes.py"
+    ],
+    "numstat": {
+      "src/todo_notes.py": [
+        800,
+        100
+      ]
+    }
+  }
+}

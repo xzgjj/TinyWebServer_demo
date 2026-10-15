@@ -1,0 +1,13 @@
+{
+  "rule": "CODE-001",
+  "title": "注释掉的代码块 + 未使用私有字段 + 未使用 static 函数",
+  "expect_status": [
+    "block"
+  ],
+  "min_findings": 3,
+  "git": {
+    "changed": [
+      "src/widget.cpp"
+    ]
+  }
+}

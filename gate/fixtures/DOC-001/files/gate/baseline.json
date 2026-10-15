@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-01-01T00:00:00+0000",
+  "generator": "gate/fixtures/DOC-001 (手工夹具)",
+  "doc_chars": {
+    "implementation_plan.md": 739
+  },
+  "warnings": {
+    "g++": 0,
+    "clang++": 0
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "file_count": 0,
+  "files": {},
+  "generated_at": "2026-10-15T17:48:56+0800",
+  "generator": "scripts/gate/selftest.py::update_fixture_baselines",
+  "protected_globs": [
+    "test/**",
+    "benchmark/src/**"
+  ]
+}

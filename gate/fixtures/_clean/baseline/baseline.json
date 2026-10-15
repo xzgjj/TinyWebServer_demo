@@ -1,0 +1,9 @@
+{
+  "doc_chars": {},
+  "generated_at": "2026-10-15T17:48:56+0800",
+  "generator": "scripts/gate/selftest.py::update_fixture_baselines",
+  "warnings": {
+    "clang++": 0,
+    "g++": 0
+  }
+}

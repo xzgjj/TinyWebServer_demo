@@ -1,0 +1,12 @@
+{
+  "rule": "DOC-002",
+  "title": "同一文档内出现完全相同的长段落块",
+  "expect_status": [
+    "block"
+  ],
+  "git": {
+    "changed": [
+      "notes.txt"
+    ]
+  }
+}
