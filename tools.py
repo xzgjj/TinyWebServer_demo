@@ -59,15 +59,21 @@ def setup_build_dir(clean=False):
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-def build(mode="Debug"):
+def build(mode="Debug", std="23"):
     setup_build_dir()
-    print(f">> 开始构建项目 [模式: {mode}]...")
+    print(f">> 开始构建项目 [模式: {mode}, C++ 标准: c++{std}]...")
     try:
-        subprocess.run(["cmake", f"-DCMAKE_BUILD_TYPE={mode}", ".."], cwd=str(BUILD_DIR), check=True)
-        subprocess.run(["make", "-j4"], cwd=str(BUILD_DIR), check=True)
+        gen = ["-G", "Ninja"] if shutil.which("ninja") else []
+        subprocess.run(["cmake", *gen, f"-DCMAKE_BUILD_TYPE={mode}", f"-DTWS_CXX_STANDARD={std}",
+                        "-DBUILD_TESTING=ON", "-DBUILD_BENCHMARKS=ON", ".."],
+                       cwd=str(BUILD_DIR), check=True)
+        subprocess.run(["cmake", "--build", ".", "--parallel"], cwd=str(BUILD_DIR), check=True)
         return True
     except subprocess.CalledProcessError:
         print(">> 构建失败！")
+        return False
+    except FileNotFoundError:
+        print(">> 未找到 cmake，请确认已安装并在 PATH 中")
         return False
 
 def save_test_log(name, stdout, stderr, ret_code):
@@ -574,6 +580,17 @@ def main():
 
     clean_p = subparsers.add_parser("clean", help="仅清理构建目录")
 
+    # 门禁：完整实现位于 scripts/gate/**，这里只做透传，避免两套 CLI 语义漂移
+    gate_p = subparsers.add_parser("gate", help="门禁：run/declare/status/report/explain/exception/reset/selftest")
+    gate_p.add_argument("gate_args", nargs=argparse.REMAINDER,
+                        help="透传给 scripts/gate/cli.py 的参数，例如: gate run --task v8")
+
+    ci_p = subparsers.add_parser("ci-local", help="本地 CI：构建 + ctest + 门禁判定")
+    ci_p.add_argument("--mode", choices=["debug", "perf"], default="debug")
+    ci_p.add_argument("--std", default="23", help="C++ 标准（17/20/23）")
+    ci_p.add_argument("--base", default="", help="门禁判定区间（如 origin/main..HEAD），留空按工作区判定")
+    ci_p.add_argument("--task", default="", help="门禁任务契约 ID")
+
     clean_logs_p = subparsers.add_parser("clean-logs", help="定期清理日志文件，保留重要信息")
     clean_logs_p.add_argument("--keep-days", type=int, default=7, help="保留最近N天的日志文件（默认：7）")
     clean_logs_p.add_argument("--keep-max-files", type=int, default=20, help="每个目录最多保留的文件数（默认：20）")
@@ -623,6 +640,33 @@ def main():
         debug(args.target)
     elif args.command == "clean":
         clean()
+    elif args.command == "gate":
+        sys.path.insert(0, str(ROOT_DIR / "scripts"))
+        try:
+            from gate.cli import main as gate_main   # type: ignore[import-not-found]
+        except ImportError as exc:
+            print(f"[错误] 无法加载门禁模块（scripts/gate）: {exc}")
+            sys.exit(3)
+        argv = [a for a in (args.gate_args or []) if a != "--"]
+        sys.exit(gate_main(argv))
+    elif args.command == "ci-local":
+        mode = "Debug" if args.mode == "debug" else "Release"
+        if not build(mode):
+            sys.exit(1)
+        tests_ok = test()
+        gate_argv = ["run", "--serial"]
+        if args.base:
+            gate_argv += ["--base", args.base]
+        if args.task:
+            gate_argv += ["--task", args.task]
+        sys.path.insert(0, str(ROOT_DIR / "scripts"))
+        try:
+            from gate.cli import main as gate_main   # type: ignore[import-not-found]
+        except ImportError as exc:
+            print(f"[错误] 无法加载门禁模块（scripts/gate）: {exc}")
+            sys.exit(3 if tests_ok else 1)
+        code = gate_main(gate_argv)
+        sys.exit(code if tests_ok else 1)
     elif args.command == "clean-logs":
         clean_logs(
             keep_days=args.keep_days,
