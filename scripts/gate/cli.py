@@ -363,6 +363,34 @@ def cmd_report(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 # 子命令：exception
 # --------------------------------------------------------------------------- #
+def _auto_scope(root: Path, spec: Spec, rule_id: str, changed: list[str]) -> list[str]:
+    """按**规则自身**的保护范围自动推导 waiver 范围。
+
+    为什么不能统一用 spec.protected_paths：不同规则保护的东西不同 ——
+    CI-001 保护的是"规则/引擎/CI/基线"（spec.protected_paths），
+    TEST-001 保护的是"受保护测试"（TEST-001.params.protected_globs = test/**）。
+    实测踩过：给 TEST-001 申请时套用 CI-001 的范围，得到的 waiver 覆盖不到测试文件，
+    批准了也不生效。
+    """
+    patterns: list[str] = []
+    rule = spec.rules.get(rule_id)
+    if rule is not None:
+        for key in ("protected_globs", "protected_paths", "deny", "default_deny"):
+            patterns += [str(p) for p in (rule.get(key) or [])]
+    if not patterns:
+        # 规则自己没有声明保护范围时才回退到全局受保护路径（如 CI-001）。
+        # 为什么不无条件叠加：会给 TEST-001 这样的规则塞进一堆无关的 gate/** 文件，
+        # 范围看起来"很宽"，复核的人无法一眼判断这条例外到底放过了什么。
+        patterns = list(spec.protected_paths)
+    out: list[str] = []
+    for path in changed:
+        if path in out:
+            continue
+        if match_any(path, patterns):
+            out.append(path)
+    return out
+
+
 def cmd_exception_request(args: argparse.Namespace) -> int:
     root = resolve_root(args)
     spec = load_spec(root, args)
@@ -376,7 +404,7 @@ def cmd_exception_request(args: argparse.Namespace) -> int:
         # 而不带 scope 的申请即使被批准也永远不生效（实测：先 block 再说"没有任何 waiver 覆盖"）。
         # 注意 --base：CI 与区间审查看的是提交区间，不是工作区；不传 --base 时
         # 工作区可能已经没有改动（都已提交），scope 会算成空 -> 例外无效。
-        scope = [p for p in facts.changed if match_any(p, spec.protected_paths)]
+        scope = _auto_scope(root, spec, str(args.rule).upper(), facts.changed)
 
     w = waivers.request(
         root,
