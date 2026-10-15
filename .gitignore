@@ -7,10 +7,10 @@ bin/
 *.a
 *.so
 
-# 可执行文件
-server
-test_*
-bench.log
+# 可执行文件（只忽略仓库根目录下的产物；不加前导斜杠会误伤 test/*.cpp 源码）
+/server
+/test_*
+/bench.log
 *.log
 
 # IDE & 编辑器
