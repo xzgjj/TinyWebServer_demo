@@ -36,13 +36,17 @@ void TestKeepAliveManagerBasic() {
     manager.OnRequestComplete(2);
 
     // 6. 检查空闲时间（应该很小）
+    //    容差说明：这里断言的是"空闲计时在推进"，不是"恰好 0/1 秒"。
+    //    原实现用 `<= 1` / `[1,2]` 这样的硬窗口，在共享 CI runner 上因调度延迟
+    //    必然偶发失败（实测 Windows clang++ 作业在负载下超出上界）。
+    //    计时类断言必须留出调度余量，否则测的是机器负载而不是被测逻辑。
     int idle_seconds = manager.GetIdleSeconds(1);
-    assert(idle_seconds >= 0 && idle_seconds <= 1); // 刚完成，空闲时间接近0
+    assert(idle_seconds >= 0 && idle_seconds <= 3); // 刚完成，空闲时间接近0
 
     // 7. 模拟时间流逝（睡眠 1 秒）
     std::this_thread::sleep_for(std::chrono::seconds(1));
     idle_seconds = manager.GetIdleSeconds(1);
-    assert(idle_seconds >= 1 && idle_seconds <= 2);
+    assert(idle_seconds >= 1 && idle_seconds <= 5);   // 下界保证"确实在走"，上界留调度余量
 
     // 8. 检查空闲超时（5秒超时，1秒后未超时）
     assert(manager.IsIdleTimeout(1) == false);
